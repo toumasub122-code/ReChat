@@ -18,7 +18,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 // --- 2. 設定：Supabaseの情報 ---
 const SB_URL = 'https://dkyhhoqzphpwwnnwmdzq.supabase.co/rest/v1';
-const SB_KEY = 'sb_publishable_EQweuKMI1vsPOa4fNDilBA_l1SeUzYA';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRreWhob3F6cGhwd3dubndtZHpxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MzIyMjEsImV4cCI6MjA4NzUwODIyMX0.ZDWsgWzwZFdBGv31njaNL_QkJAjwHPZj6IFutIOlfPk';
 
 const HEADERS = {
     'apikey': SB_KEY,
