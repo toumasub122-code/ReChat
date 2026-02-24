@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Easy Chat</title>
+    <style>
+        :root { --line-green: #7494c0; --my-bubble: #8de055; --sidebar-bg: #2c3e50; }
+        body { font-family: sans-serif; background: var(--line-green); margin: 0; display: flex; height: 100vh; overflow: hidden; }
+        
+        /* サイドバー */
+        #sidebar { width: 80px; background: var(--sidebar-bg); display: flex; flex-direction: column; align-items: center; padding: 10px 0; gap: 15px; transition: width 0.3s; z-index: 10; }
+        #sidebar:hover { width: 200px; }
+        .friend-icon { width: 50px; height: 50px; background: #95a5a6; border-radius: 15px; cursor: pointer; display: flex; justify-content: center; align-items: center; color: white; font-weight: bold; overflow: hidden; border: 2px solid transparent; }
+        .friend-icon.active { border-color: var(--my-bubble); }
+        .friend-name { display: none; margin-left: 10px; font-size: 14px; white-space: nowrap; }
+        #sidebar:hover .friend-name { display: inline; }
+        #sidebar:hover .friend-icon { width: 180px; justify-content: flex-start; padding-left: 10px; }
+
+        /* メインエリア */
+        #main-area { flex: 1; display: flex; flex-direction: column; position: relative; }
+
+        /* ヘッダー */
+        header { background: #35495e; color: white; padding: 10px 15px; display: flex; justify-content: space-between; align-items: center; }
+        #my-id-display { font-size: 10px; opacity: 0.7; display: none; } /* UUIDは非表示 */
+        
+        /* チャットエリア */
+        #chat-container { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-bottom: 80px; }
+        .msg { max-width: 70%; padding: 8px 12px; border-radius: 15px; font-size: 14px; word-wrap: break-word; }
+        .msg.me { align-self: flex-end; background: var(--my-bubble); }
+        .msg.other { align-self: flex-start; background: white; }
+
+        /* 入力エリア */
+        .input-area { background: #f8f8f8; padding: 10px; display: flex; gap: 10px; align-items: center; position: absolute; bottom: 0; width: 100%; box-sizing: border-box; border-top: 1px solid #ddd; }
+        input[type="text"] { flex: 1; border: 1px solid #ddd; padding: 10px; border-radius: 20px; outline: none; }
+        
+        /* モーダル */
+        .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.3); z-index: 1000; min-width: 250px; }
+        .overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 999; }
+    </style>
+</head>
+<body>
+
+<div id="sidebar">
+    <div class="friend-icon" onclick="showFriendModal()" style="background: #4e5d6c;">
+        <span>＋</span><span class="friend-name">フレンド追加</span>
+    </div>
+    <hr style="width: 80%; border: 0; border-top: 1px solid #555;">
+    <div id="friend-list-container" style="display: contents;"></div>
+</div>
+
+<div id="main-area">
+    <header>
+        <div id="chat-with-name">相手を選択してください</div>
+        <div id="my-id-display"></div> 
+    </header>
+
+    <div id="chat-container"></div>
+
+    <div class="input-area">
+        <input type="text" id="msg-input" placeholder="メッセージを入力...">
+        <button id="send-btn" style="background: #35495e; color: white; border: none; padding: 8px 15px; border-radius: 20px; cursor: pointer;">送信</button>
+    </div>
+</div>
+
+<div id="overlay" class="overlay" onclick="closeModal()"></div>
+<div id="friend-modal" class="modal">
+    <h3>フレンド追加</h3>
+    <p>あなたのコード: <strong id="my-temp-code" style="font-size: 20px; color: #2c3e50;">----</strong></p>
+    <hr>
+    <input type="text" id="friend-code-input" placeholder="相手の4桁コードを入力" style="width: 85%; padding: 8px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 5px;">
+    <button onclick="addFriend()" style="width: 100%; padding: 10px; background: var(--my-bubble); border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">申請する</button>
+    <button onclick="closeModal()" style="width: 100%; margin-top: 5px; padding: 5px; background: #eee; border: none; border-radius: 5px; cursor: pointer;">閉じる</button>
+</div>
+
+<script src="chat.js"></script>
+</body>
+</html>
