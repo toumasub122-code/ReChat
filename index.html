@@ -2,41 +2,169 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Easy Chat</title>
     <style>
-        :root { --line-green: #7494c0; --my-bubble: #8de055; --sidebar-bg: #2c3e50; }
-        body { font-family: sans-serif; background: var(--line-green); margin: 0; display: flex; height: 100vh; overflow: hidden; }
-        
-        /* サイドバー */
-        #sidebar { width: 80px; background: var(--sidebar-bg); display: flex; flex-direction: column; align-items: center; padding: 10px 0; gap: 15px; transition: width 0.3s; z-index: 10; }
-        #sidebar:hover { width: 200px; }
-        .friend-icon { width: 50px; height: 50px; background: #95a5a6; border-radius: 15px; cursor: pointer; display: flex; justify-content: center; align-items: center; color: white; font-weight: bold; overflow: hidden; border: 2px solid transparent; }
-        .friend-icon.active { border-color: var(--my-bubble); }
-        .friend-name { display: none; margin-left: 10px; font-size: 14px; white-space: nowrap; }
-        #sidebar:hover .friend-name { display: inline; }
-        #sidebar:hover .friend-icon { width: 180px; justify-content: flex-start; padding-left: 10px; }
+        :root { 
+            --line-green: #7494c0; 
+            --my-bubble: #8de055; 
+            --sidebar-bg: #2c3e50; 
+            --header-bg: #35495e;
+            --input-bg: #f8f8f8;
+        }
+
+        /* 全体レイアウト */
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            background: var(--line-green); 
+            margin: 0; 
+            display: flex; 
+            height: 100vh; 
+            height: -webkit-fill-available; /* iOSのSafari対策 */
+            overflow: hidden; 
+        }
+
+        /* サイドバー：PCではホバー、スマホでは固定幅 */
+        #sidebar { 
+            width: 70px; 
+            background: var(--sidebar-bg); 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            padding: 10px 0; 
+            gap: 15px; 
+            z-index: 10;
+            flex-shrink: 0;
+        }
+
+        /* PCでのみサイドバーを広げる */
+        @media (min-width: 768px) {
+            #sidebar { transition: width 0.3s; }
+            #sidebar:hover { width: 200px; }
+            #sidebar:hover .friend-name { display: inline; }
+            #sidebar:hover .friend-icon { width: 180px; justify-content: flex-start; padding-left: 10px; }
+        }
+
+        .friend-icon { 
+            width: 45px; 
+            height: 45px; 
+            background: #95a5a6; 
+            border-radius: 12px; 
+            cursor: pointer; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            color: white; 
+            font-weight: bold; 
+            overflow: hidden; 
+            border: 2px solid transparent; 
+            flex-shrink: 0;
+        }
+        .friend-icon.active { border-color: var(--my-bubble); background: #5d6d6e !important; }
+        .friend-name { display: none; margin-left: 10px; font-size: 14px; white-space: nowrap; color: white; }
 
         /* メインエリア */
-        #main-area { flex: 1; display: flex; flex-direction: column; position: relative; }
+        #main-area { 
+            flex: 1; 
+            display: flex; 
+            flex-direction: column; 
+            background: #ebebeb; /* チャット背景を少し明るく */
+            position: relative;
+            overflow: hidden;
+        }
 
         /* ヘッダー */
-        header { background: #35495e; color: white; padding: 10px 15px; display: flex; justify-content: space-between; align-items: center; }
-        #my-id-display { font-size: 10px; opacity: 0.7; display: none; } /* UUIDは非表示 */
+        header { 
+            background: var(--header-bg); 
+            color: white; 
+            padding: 12px 15px; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
         
-        /* チャットエリア */
-        #chat-container { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-bottom: 80px; }
-        .msg { max-width: 70%; padding: 8px 12px; border-radius: 15px; font-size: 14px; word-wrap: break-word; }
-        .msg.me { align-self: flex-end; background: var(--my-bubble); }
-        .msg.other { align-self: flex-start; background: white; }
+        /* チャット表示エリア */
+        #chat-container { 
+            flex: 1; 
+            padding: 15px; 
+            overflow-y: auto; 
+            display: flex; 
+            flex-direction: column; 
+            gap: 12px; 
+            /* 入力エリアの高さ分だけ下に余白を作る */
+            padding-bottom: 80px; 
+        }
 
-        /* 入力エリア */
-        .input-area { background: #f8f8f8; padding: 10px; display: flex; gap: 10px; align-items: center; position: absolute; bottom: 0; width: 100%; box-sizing: border-box; border-top: 1px solid #ddd; }
-        input[type="text"] { flex: 1; border: 1px solid #ddd; padding: 10px; border-radius: 20px; outline: none; }
+        /* メッセージバブル */
+        .msg { 
+            max-width: 75%; 
+            padding: 10px 14px; 
+            border-radius: 18px; 
+            font-size: 15px; 
+            word-wrap: break-word; 
+            line-height: 1.4;
+            position: relative;
+        }
+        .msg.me { 
+            align-self: flex-end; 
+            background: var(--my-bubble); 
+            border-top-right-radius: 2px;
+        }
+        .msg.other { 
+            align-self: flex-start; 
+            background: white; 
+            border-top-left-radius: 2px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+
+        /* 入力エリア：スマホでも絶対に見えるように固定 */
+        .input-area { 
+            background: var(--input-bg); 
+            padding: 10px 15px; 
+            display: flex; 
+            gap: 10px; 
+            align-items: center; 
+            position: fixed; /* absoluteからfixedに変更 */
+            bottom: 0; 
+            right: 0;
+            left: 70px; /* サイドバーの幅分空ける */
+            box-sizing: border-box; 
+            border-top: 1px solid #ddd; 
+            z-index: 100;
+        }
+
+        @media (max-width: 767px) {
+            .input-area { left: 70px; padding: 10px; }
+        }
+
+        input[type="text"] { 
+            flex: 1; 
+            border: 1px solid #ccc; 
+            padding: 12px 15px; 
+            border-radius: 25px; 
+            outline: none; 
+            font-size: 16px; /* スマホでの自動ズーム防止 */
+            background: white;
+        }
+
+        #send-btn { 
+            background: var(--header-bg); 
+            color: white; 
+            border: none; 
+            padding: 10px 18px; 
+            border-radius: 20px; 
+            cursor: pointer; 
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+
+        /* モーダル関連 */
+        .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 25px; border-radius: 15px; box-shadow: 0 5px 30px rgba(0,0,0,0.4); z-index: 1000; width: 85%; max-width: 320px; }
+        .overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 999; }
         
-        /* モーダル */
-        .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.3); z-index: 1000; min-width: 250px; }
-        .overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 999; }
+        .modal h3 { margin-top: 0; color: var(--sidebar-bg); }
+        .modal input { width: 100%; padding: 12px; margin: 15px 0; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; font-size: 16px; }
     </style>
 </head>
 <body>
@@ -45,32 +173,32 @@
     <div class="friend-icon" onclick="showFriendModal()" style="background: #4e5d6c;">
         <span>＋</span><span class="friend-name">フレンド追加</span>
     </div>
-    <hr style="width: 80%; border: 0; border-top: 1px solid #555;">
-    <div id="friend-list-container" style="display: contents;"></div>
+    <hr style="width: 60%; border: 0; border-top: 1px solid #555; margin: 5px 0;">
+    <div id="friend-list-container" style="display: flex; flex-direction: column; gap: 10px; width: 100%; align-items: center;"></div>
 </div>
 
 <div id="main-area">
     <header>
         <div id="chat-with-name">相手を選択してください</div>
-        <div id="my-id-display"></div> 
     </header>
 
-    <div id="chat-container"></div>
+    <div id="chat-container">
+        </div>
 
     <div class="input-area">
-        <input type="text" id="msg-input" placeholder="メッセージを入力...">
-        <button id="send-btn" style="background: #35495e; color: white; border: none; padding: 8px 15px; border-radius: 20px; cursor: pointer;">送信</button>
+        <input type="text" id="msg-input" placeholder="メッセージを入力..." autocomplete="off">
+        <button id="send-btn">送信</button>
     </div>
 </div>
 
 <div id="overlay" class="overlay" onclick="closeModal()"></div>
 <div id="friend-modal" class="modal">
     <h3>フレンド追加</h3>
-    <p>あなたのコード: <strong id="my-temp-code" style="font-size: 20px; color: #2c3e50;">----</strong></p>
-    <hr>
-    <input type="text" id="friend-code-input" placeholder="相手の4桁コードを入力" style="width: 85%; padding: 8px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 5px;">
-    <button onclick="addFriend()" style="width: 100%; padding: 10px; background: var(--my-bubble); border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">申請する</button>
-    <button onclick="closeModal()" style="width: 100%; margin-top: 5px; padding: 5px; background: #eee; border: none; border-radius: 5px; cursor: pointer;">閉じる</button>
+    <p>あなたのコード: <strong id="my-temp-code" style="font-size: 24px; color: #e67e22; letter-spacing: 2px;">----</strong></p>
+    <p style="font-size: 12px; color: #666;">※この画面を開いている間のみ有効です</p>
+    <input type="text" id="friend-code-input" placeholder="相手の4桁コードを入力" maxlength="4">
+    <button onclick="addFriend()" style="width: 100%; padding: 12px; background: var(--my-bubble); border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 16px;">フレンドを登録</button>
+    <button onclick="closeModal()" style="width: 100%; margin-top: 10px; padding: 8px; background: #eee; border: none; border-radius: 8px; cursor: pointer; color: #666;">キャンセル</button>
 </div>
 
 <script src="chat.js"></script>
