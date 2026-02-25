@@ -20,21 +20,20 @@ const HEADERS = {
 // --- 3. 状態管理 ---
 let currentFriendUUID = null;
 let friends = JSON.parse(localStorage.getItem('chat_friends') || '[]');
+let lastMsgCount = 0; // 新着確認用
 
-// --- 4. 名前を相手からも見えるようにDB保存 ---
+// --- 4. 名前管理機能 ---
 async function pushNameToDB(name) {
     try {
+        // user_idが重複しても大丈夫なようにUPSERT的な動きを期待（DB側でuuidを一意に設定している場合）
         await fetch(`${SB_URL}/users`, {
             method: 'POST',
-            headers: HEADERS,
+            headers: { ...HEADERS, 'Prefer': 'resolution=merge-duplicates' },
             body: JSON.stringify({ uuid: myUUID, display_name: name }),
         });
-        // 既存ユーザーの更新も兼ねるため、upsert設定が必要な場合は headersに 'Prefer': 'resolution=merge-duplicates' 等が必要
-        // 今回は簡易的に毎回送信
     } catch (e) { console.error(e); }
 }
 
-// 相手の名前をDBから取得する
 async function getFriendName(uuid) {
     try {
         const res = await fetch(`${SB_URL}/users?uuid=eq.${uuid}&select=display_name`, { headers: HEADERS });
@@ -43,7 +42,7 @@ async function getFriendName(uuid) {
     } catch (e) { return `User-${uuid.substring(0,4)}`; }
 }
 
-// --- 5. メッセージ取得 ---
+// --- 5. メッセージ取得 (自動スクロール付) ---
 async function loadChatHistory(friendUuid) {
     if (!friendUuid) return;
     try {
@@ -51,14 +50,21 @@ async function loadChatHistory(friendUuid) {
         const url = `${SB_URL}/chat_messages?select=*&or=(${filter})&order=created_at.asc`;
         const res = await fetch(url, { headers: HEADERS });
         const history = await res.json();
+        
         if (!Array.isArray(history)) return;
-        const container = document.getElementById('chat-container');
-        container.innerHTML = '';
-        history.forEach(msg => appendMessage(msg.content, msg.from_uuid === myUUID));
+
+        // メッセージ数が増えたときだけ再描画
+        if (history.length !== lastMsgCount) {
+            const container = document.getElementById('chat-container');
+            container.innerHTML = '';
+            history.forEach(msg => appendMessage(msg.content, msg.from_uuid === myUUID));
+            lastMsgCount = history.length;
+            container.scrollTop = container.scrollHeight;
+        }
     } catch (e) { console.error(e); }
 }
 
-// --- 6. フレンド同期 & 名前更新 ---
+// --- 6. フレンド同期 ---
 async function syncFriends() {
     try {
         const url = `${SB_URL}/friend_relations?or=(user_a.eq.${myUUID},user_b.eq.${myUUID})`;
@@ -68,16 +74,14 @@ async function syncFriends() {
 
         for (const rel of data) {
             const targetUuid = (rel.user_a === myUUID) ? rel.user_b : rel.user_a;
-            let existingFriend = friends.find(f => f.uuid === targetUuid);
-            
-            // 最新の名前をDBから取得
+            let existingIdx = friends.findIndex(f => f.uuid === targetUuid);
             const latestName = await getFriendName(targetUuid);
 
-            if (!existingFriend) {
+            if (existingIdx === -1) {
                 friends.push({ uuid: targetUuid, name: latestName });
                 updated = true;
-            } else if (existingFriend.name !== latestName) {
-                existingFriend.name = latestName;
+            } else if (friends[existingIdx].name !== latestName) {
+                friends[existingIdx].name = latestName;
                 updated = true;
             }
         }
@@ -88,7 +92,7 @@ async function syncFriends() {
     } catch (e) { console.error(e); }
 }
 
-// --- 7. 送信・設定処理 ---
+// --- 7. 送信・設定・削除 ---
 async function sendMessage() {
     const input = document.getElementById('msg-input');
     const content = input.value.trim();
@@ -99,8 +103,8 @@ async function sendMessage() {
             headers: HEADERS,
             body: JSON.stringify({ from_uuid: myUUID, to_uuid: currentFriendUUID, content: content, is_image: false })
         });
-        appendMessage(content, true);
         input.value = '';
+        loadChatHistory(currentFriendUUID); // 送信後すぐ反映
     } catch (e) { alert("送信失敗"); }
 }
 
@@ -109,25 +113,31 @@ async function saveMyName() {
     if (val) {
         myDisplayName = val;
         localStorage.setItem('chat_my_name', val);
-        await pushNameToDB(val); // DBに保存して相手からも見えるようにする
-        alert("名前を保存しました。相手のリストにも反映されます。");
+        await pushNameToDB(val);
+        alert("名前を保存しました。");
+        closeAllModals();
     }
 }
 
 function deleteFriend(uuid) {
-    if (!confirm("削除しますか？")) return;
+    if (!confirm("このフレンドをリストから削除しますか？")) return;
+    // ローカルストレージから削除
     friends = friends.filter(f => f.uuid !== uuid);
     localStorage.setItem('chat_friends', JSON.stringify(friends));
+    
+    // チャット中だったら解除
     if (currentFriendUUID === uuid) {
         currentFriendUUID = null;
+        lastMsgCount = 0;
         document.getElementById('chat-with-name').innerText = "相手を選択してください";
         document.getElementById('chat-container').innerHTML = '';
     }
+    
     renderFriendList();
     renderDeleteFriendList();
 }
 
-// --- 8. UI表示 ---
+// --- 8. UI描画 ---
 function renderFriendList() {
     const container = document.getElementById('friend-list-container');
     container.innerHTML = '';
@@ -137,6 +147,7 @@ function renderFriendList() {
         div.innerHTML = `<span>👤</span><span class="friend-name">${f.name}</span>`;
         div.onclick = () => {
             currentFriendUUID = f.uuid;
+            lastMsgCount = 0; // 切り替え時は強制リロード
             document.getElementById('chat-with-name').innerText = `${f.name} とのチャット`;
             loadChatHistory(f.uuid);
             renderFriendList();
@@ -147,11 +158,12 @@ function renderFriendList() {
 
 function renderDeleteFriendList() {
     const container = document.getElementById('delete-friend-list');
-    container.innerHTML = friends.length ? '' : '<p style="text-align:center;font-size:12px;">なし</p>';
+    if(!container) return;
+    container.innerHTML = friends.length ? '' : '<p style="text-align:center;font-size:12px;color:#999;">フレンドはいません</p>';
     friends.forEach(f => {
         const item = document.createElement('div');
-        item.className = 'delete-item';
-        item.innerHTML = `<span>${f.name}</span><button onclick="deleteFriend('${f.uuid}')" style="background:#e74c3c;color:white;border:none;border-radius:4px;padding:4px 8px;cursor:pointer;">削除</button>`;
+        item.style = "display:flex; justify-content:space-between; align-items:center; padding:10px; border-bottom:1px solid #eee;";
+        item.innerHTML = `<span>${f.name}</span><button onclick="deleteFriend('${f.uuid}')" style="background:#e74c3c;color:white;border:none;border-radius:4px;padding:4px 10px;cursor:pointer;">削除</button>`;
         container.appendChild(item);
     });
 }
@@ -165,6 +177,7 @@ function appendMessage(content, isMe) {
     container.scrollTop = container.scrollHeight;
 }
 
+// モーダル
 async function showFriendModal() {
     const code = Math.floor(1000 + Math.random() * 9000).toString();
     document.getElementById('my-temp-code').innerText = code;
@@ -185,22 +198,28 @@ function closeAllModals() {
 }
 
 async function addFriend() {
-    const code = document.getElementById('friend-code-input').value.trim().toUpperCase();
+    const codeInput = document.getElementById('friend-code-input');
+    const code = codeInput.value.trim().toUpperCase();
     if (code.length !== 4) return;
-    const res = await fetch(`${SB_URL}/friend_codes?code=eq.${code}&select=uuid`, { headers: HEADERS });
-    const data = await res.json();
-    if (data.length > 0) {
-        await fetch(`${SB_URL}/friend_relations`, { method: 'POST', headers: HEADERS, body: JSON.stringify({ user_a: myUUID, user_b: data[0].uuid }) });
-        await syncFriends();
-        closeAllModals();
-    }
+    try {
+        const res = await fetch(`${SB_URL}/friend_codes?code=eq.${code}&select=uuid`, { headers: HEADERS });
+        const data = await res.json();
+        if (data.length > 0) {
+            await fetch(`${SB_URL}/friend_relations`, { method: 'POST', headers: HEADERS, body: JSON.stringify({ user_a: myUUID, user_b: data[0].uuid }) });
+            await syncFriends();
+            codeInput.value = '';
+            closeAllModals();
+        } else {
+            alert("コードが見つかりません");
+        }
+    } catch (e) { alert("申請エラー"); }
 }
 
 // --- 9. 初期化 ---
 window.addEventListener('DOMContentLoaded', async () => {
-    // 起動時に自分の名前をDBに登録
     await pushNameToDB(myDisplayName);
 
+    // グローバルに公開（HTML内のonclick用）
     window.showFriendModal = showFriendModal;
     window.showSettingsModal = showSettingsModal;
     window.closeAllModals = closeAllModals;
@@ -213,8 +232,10 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     renderFriendList();
     syncFriends();
+
+    // 4秒おきに自動更新（メッセージ & フレンド名）
     setInterval(() => {
         if (currentFriendUUID) loadChatHistory(currentFriendUUID);
         syncFriends();
-    }, 5000);
+    }, 4000);
 });
