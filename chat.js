@@ -33,19 +33,22 @@ window.toggleNotification = () => {
     }
 };
 
-// --- 5. 同期・削除ロジック (統合済み) ---
+// --- 5. 同期・削除ロジック (徹底修正版) ---
 async function syncFriends() {
     try {
+        // 1. DBから現在の有効な関係をすべて取得
         const url = `${SB_URL}/friend_relations?or=(user_a.eq.${myUUID},user_b.eq.${myUUID})`;
         const res = await fetch(url, { headers: HEADERS });
         const dbRelations = await res.json();
         
+        // 2. DBに存在するフレンドのUUIDリストを作成
         const dbUuids = dbRelations.map(rel => (rel.user_a === myUUID) ? rel.user_b : rel.user_a);
         
-        // DBの状態を正として同期（LocalStorageの古い情報を上書き）
+        // 3. 【重要】LocalStorageをDBの状態に「完全上書き」する（古いUUIDを残さない）
         friendUuids = dbUuids;
         localStorage.setItem('chat_friend_uuids', JSON.stringify(friendUuids));
 
+        // 4. 表示用データの再構築
         const updatedFriends = [];
         for (const uid of friendUuids) {
             const resN = await fetch(`${SB_URL}/users?uuid=eq.${uid}&select=display_name`, { headers: HEADERS });
@@ -53,13 +56,15 @@ async function syncFriends() {
             const name = dataN[0]?.display_name || `User-${uid.substring(0,4)}`;
             updatedFriends.push({ uuid: uid, name: name });
         }
+        
+        // 5. メモリ内のリストを更新
         friends = updatedFriends;
 
-        // 相手が削除した場合、即座にチャット画面を閉じる
-        if (currentFriendUUID && !friendUuids.includes(currentFriendUUID)) {
+        // 6. もし今チャットしている相手がDBのリストから消えていたら、即座に画面をクリア
+        if (currentFriendUUID && !dbUuids.includes(currentFriendUUID)) {
             currentFriendUUID = null;
             document.getElementById('chat-container').innerHTML = '';
-            document.getElementById('chat-with-name').innerText = '相手を選択してください';
+            document.getElementById('chat-with-name').innerText = '相手が削除されました';
             document.getElementById('notify-area').style.display = 'none';
         }
 
@@ -68,13 +73,26 @@ async function syncFriends() {
     } catch (e) { console.error("Sync Error:", e); }
 }
 
+// 自分で削除ボタンを押した時のDB送信処理
 window.removeFriend = async (targetUuid) => {
     if (!confirm("フレンドを解除しますか？")) return;
     try {
+        // DBに対して削除リクエストを送信
         const condition = `or(and(user_a.eq.${myUUID},user_b.eq.${targetUuid}),and(user_a.eq.${targetUuid},user_b.eq.${myUUID}))`;
         const url = `${SB_URL}/friend_relations?${condition}`;
-        const res = await fetch(url, { method: 'DELETE', headers: HEADERS });
-        if (res.ok) await syncFriends(); 
+        
+        const res = await fetch(url, { 
+            method: 'DELETE', 
+            headers: HEADERS 
+        });
+
+        if (res.ok) {
+            // DB削除が成功したら、即座にメモリと表示をクリアして同期
+            friends = friends.filter(f => f.uuid !== targetUuid);
+            friendUuids = friendUuids.filter(u => u !== targetUuid);
+            localStorage.setItem('chat_friend_uuids', JSON.stringify(friendUuids));
+            await syncFriends(); 
+        }
     } catch (e) { console.error("削除エラー:", e); }
 };
 
