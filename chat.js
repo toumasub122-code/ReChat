@@ -32,7 +32,7 @@ window.toggleNotification = () => {
     }
 };
 
-// --- 5. メッセージ・フレンド・認証機能 ---
+// --- 5. メッセージ・フレンド機能 ---
 async function loadChatHistory(friendUuid, silent = true) {
     if (!friendUuid) return;
     try {
@@ -73,13 +73,14 @@ async function checkMyStatus() {
 
 async function syncFriends() {
     try {
+        // DBから最新の関係性を取得
         const url = `${SB_URL}/friend_relations?or=(user_a.eq.${myUUID},user_b.eq.${myUUID})`;
         const res = await fetch(url, { headers: HEADERS });
         const data = await res.json();
         const dbUuids = data.map(rel => (rel.user_a === myUUID) ? rel.user_b : rel.user_a);
         
         let updated = false;
-        // 追加されたフレンドをチェック
+        // 追加チェック
         for (const uid of dbUuids) {
             if (!friends.find(f => f.uuid === uid)) {
                 const resN = await fetch(`${SB_URL}/users?uuid=eq.${uid}&select=display_name`, { headers: HEADERS });
@@ -89,14 +90,15 @@ async function syncFriends() {
                 updated = true;
             }
         }
-        // 相手側が削除した場合、自分のリストからも即消去
-        const originalCount = friends.length;
+        // 削除チェック（DBにいないUUIDをローカルからも消す）
+        const oldLen = friends.length;
         friends = friends.filter(f => dbUuids.includes(f.uuid));
-        if (friends.length !== originalCount) updated = true;
+        if (friends.length !== oldLen) updated = true;
 
         if (updated) {
             localStorage.setItem('chat_friends', JSON.stringify(friends));
             renderFriendList();
+            if (document.getElementById('settings-modal').style.display === 'block') renderDeleteList();
         }
     } catch (e) {}
 }
@@ -136,24 +138,32 @@ window.saveMyName = async () => {
     }
 };
 
-// 相手のDBからも消去する双方向削除
+// 【重要修正】相手側のDBからも抹消する完全削除ロジック
 window.removeFriend = async (targetUuid) => {
     if (!confirm("フレンドを解除しますか？（相手からも消えます）")) return;
     try {
-        const filter = `or(and(user_a.eq.${myUUID},user_b.eq.${targetUuid}),and(user_a.eq.${targetUuid},user_b.eq.${myUUID}))`;
-        await fetch(`${SB_URL}/friend_relations?${filter}`, { method: 'DELETE', headers: HEADERS });
+        // 条件を1つのクエリパラメータとして正しく渡す
+        const condition = `or(and(user_a.eq.${myUUID},user_b.eq.${targetUuid}),and(user_a.eq.${targetUuid},user_b.eq.${myUUID}))`;
+        const url = `${SB_URL}/friend_relations?${condition}`;
+        
+        const res = await fetch(url, {
+            method: 'DELETE',
+            headers: HEADERS
+        });
 
-        friends = friends.filter(f => f.uuid !== targetUuid);
-        localStorage.setItem('chat_friends', JSON.stringify(friends));
-
-        if (currentFriendUUID === targetUuid) {
-            currentFriendUUID = null;
-            document.getElementById('chat-container').innerHTML = '';
-            document.getElementById('chat-with-name').innerText = '相手を選択してください';
+        if (res.ok) {
+            friends = friends.filter(f => f.uuid !== targetUuid);
+            localStorage.setItem('chat_friends', JSON.stringify(friends));
+            if (currentFriendUUID === targetUuid) {
+                currentFriendUUID = null;
+                document.getElementById('chat-container').innerHTML = '';
+                document.getElementById('chat-with-name').innerText = '相手を選択してください';
+                document.getElementById('notify-area').style.display = 'none';
+            }
+            renderFriendList();
+            renderDeleteList();
         }
-        renderFriendList();
-        renderDeleteList();
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error("削除エラー:", e); }
 };
 
 function renderDeleteList() {
@@ -161,6 +171,7 @@ function renderDeleteList() {
     container.innerHTML = '';
     if (friends.length === 0) {
         container.innerHTML = '<div style="font-size:11px; color:#999; margin-top:5px;">登録なし</div>';
+        return;
     }
     friends.forEach(f => {
         const div = document.createElement('div');
@@ -218,6 +229,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     };
 
     setInterval(() => { if (currentFriendUUID) loadChatHistory(currentFriendUUID, false); }, 3000);
-    setInterval(syncFriends, 10000);
+    setInterval(syncFriends, 5000); // 同期を少し早めました
     setInterval(checkMyStatus, 30000);
 });
