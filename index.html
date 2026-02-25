@@ -54,8 +54,7 @@
         .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 25px; border-radius: 15px; box-shadow: 0 5px 30px rgba(0,0,0,0.4); z-index: 1000; width: 85%; max-width: 320px; }
         .overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 999; }
         
-        /* UUID表示用のスタイル */
-        .uuid-display { font-size: 10px; color: #888; background: #f0f0f0; padding: 8px; border-radius: 5px; word-break: break-all; cursor: pointer; margin-top: 5px; border: 1px solid #ddd; }
+        .uuid-display { font-size: 10px; color: #888; background: #f0f0f0; padding: 8px; border-radius: 5px; word-break: break-all; cursor: pointer; margin-top: 5px; border: 1px solid #ddd; text-align: center; }
         .uuid-display:active { background: #e0e0e0; }
     </style>
 </head>
@@ -103,7 +102,7 @@
     <h3>フレンド追加</h3>
     <p>あなたのコード: <strong id="my-temp-code" style="font-size: 24px; color: #e67e22;">----</strong></p>
     <input type="text" id="friend-code-input" placeholder="相手の4桁コードを入力" maxlength="4">
-    <button onclick="addFriend()" style="width:100%; padding:12px; background:var(--my-bubble); border:none; border-radius:8px; font-weight:bold;">登録</button>
+    <button onclick="addFriend()" style="width:100%; padding:12px; background:var(--my-bubble); border:none; border-radius:8px; font-weight:bold; margin-top:10px;">登録</button>
 </div>
 
 <div id="settings-modal" class="modal">
@@ -115,7 +114,6 @@
     <div id="my-uuid-display" class="uuid-display" onclick="copyUUID()"></div>
     
     <button onclick="saveMyName()" style="width:100%; padding:10px; background:var(--sidebar-bg); color:white; border:none; border-radius:8px; margin-top:15px;">保存</button>
-    <div id="delete-friend-list" style="margin-top:20px;"></div>
     <button onclick="closeAllModals()" style="width:100%; margin-top:10px; background:#eee; border:none; padding:8px; border-radius:8px;">閉じる</button>
 </div>
 

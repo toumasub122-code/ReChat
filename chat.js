@@ -13,15 +13,13 @@ let currentFriendUUID = null;
 let friends = JSON.parse(localStorage.getItem('chat_friends') || '[]');
 let lastMsgCount = 0;
 let notificationSettings = JSON.parse(localStorage.getItem('chat_notify_settings') || '{}');
-let myIsAdmin = false; // 認証権限フラグ
+let myIsAdmin = false;
 
 // --- 4. 通知機能 ---
-function requestNotificationPermission() {
-    if (Notification.permission === "default") { Notification.requestPermission(); }
-}
-
 function sendBrowserNotification(title, body) {
-    if (Notification.permission === "granted") { new Notification(title, { body: body }); }
+    if (Notification.permission === "granted") {
+        new Notification(title, { body: body });
+    }
 }
 
 window.toggleNotification = () => {
@@ -29,10 +27,14 @@ window.toggleNotification = () => {
     const isEnabled = document.getElementById('notify-toggle').checked;
     notificationSettings[currentFriendUUID] = isEnabled;
     localStorage.setItem('chat_notify_settings', JSON.stringify(notificationSettings));
-    if (isEnabled && Notification.permission !== "granted") { Notification.requestPermission(); }
+    
+    // トグルをオンにしたときだけ、ブラウザの許可を求める（初回のみ）
+    if (isEnabled && Notification.permission === "default") {
+        Notification.requestPermission();
+    }
 };
 
-// --- 5. メッセージ・フレンド機能 ---
+// --- 5. メッセージ・フレンド・認証機能 ---
 async function loadChatHistory(friendUuid, silent = true) {
     if (!friendUuid) return;
     try {
@@ -118,7 +120,8 @@ function renderFriendList() {
 // --- 6. ユーザー管理アクション ---
 window.copyUUID = () => {
     navigator.clipboard.writeText(myUUID);
-    alert("UUIDをコピーしました");
+    // アラートを削除し、コンソールのみに
+    console.log("UUID copied to clipboard");
 };
 
 window.saveMyName = async () => {
@@ -137,8 +140,6 @@ window.addFriend = async () => {
     
     if (data.length > 0 && data[0].uuid !== myUUID) {
         const targetUuid = data[0].uuid;
-
-        // 認証制ロジック: 自分が管理者なら、追加した相手も管理者（認証済み）にする
         if (myIsAdmin) {
             await fetch(`${SB_URL}/users?uuid=eq.${targetUuid}`, {
                 method: 'PATCH',
@@ -146,11 +147,8 @@ window.addFriend = async () => {
                 body: JSON.stringify({ is_admin: true })
             });
         }
-
         await fetch(`${SB_URL}/friend_relations`, { method: 'POST', headers: HEADERS, body: JSON.stringify({ user_a: myUUID, user_b: targetUuid }) });
         syncFriends(); closeAllModals();
-    } else {
-        alert("無効なコード、または自分自身です。");
     }
 };
 
@@ -164,7 +162,7 @@ window.showFriendModal = async () => {
 
 window.showSettingsModal = () => {
     document.getElementById('my-name-input').value = myDisplayName;
-    document.getElementById('my-uuid-display').innerText = myUUID; // UUIDを表示
+    document.getElementById('my-uuid-display').innerText = myUUID;
     document.getElementById('settings-modal').style.display = 'block';
     document.getElementById('overlay').style.display = 'block';
 };
@@ -173,8 +171,8 @@ window.closeAllModals = () => { document.querySelectorAll('.modal, .overlay').fo
 
 // --- 7. 初期化とループ ---
 window.addEventListener('DOMContentLoaded', async () => {
-    requestNotificationPermission();
-    await checkMyStatus(); // 初回起動時に権限チェック
+    // 起動時の自動通知許可リクエストを削除
+    await checkMyStatus();
     renderFriendList();
     syncFriends();
 
@@ -189,5 +187,5 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     setInterval(() => { if (currentFriendUUID) loadChatHistory(currentFriendUUID, false); }, 3000);
     setInterval(syncFriends, 10000);
-    setInterval(checkMyStatus, 30000); // 30秒ごとに自分の権限が変わったかチェック
+    setInterval(checkMyStatus, 30000);
 });
