@@ -6,7 +6,12 @@ let myDisplayName = localStorage.getItem('chat_my_name') || "自分";
 // --- 2. Supabase設定 ---
 const SB_URL = 'https://dkyhhoqzphpwwnnwmdzq.supabase.co/rest/v1';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRreWhob3F6cGhwd3dubndtZHpxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MzIyMjEsImV4cCI6MjA4NzUwODIyMX0.ZDWsgWzwZFdBGv31njaNL_QkJAjwHPZj6IFutIOlfPk';
-const HEADERS = { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' };
+const HEADERS = { 
+    'apikey': SB_KEY, 
+    'Authorization': `Bearer ${SB_KEY}`, 
+    'Content-Type': 'application/json', 
+    'Prefer': 'return=representation' 
+};
 
 // --- 3. 状態管理 ---
 let currentFriendUUID = null;
@@ -33,22 +38,19 @@ window.toggleNotification = () => {
     }
 };
 
-// --- 5. 同期・削除ロジック (徹底修正版) ---
+// --- 5. 同期・削除ロジック ---
 async function syncFriends() {
     try {
-        // 1. DBから現在の有効な関係をすべて取得
         const url = `${SB_URL}/friend_relations?or=(user_a.eq.${myUUID},user_b.eq.${myUUID})`;
         const res = await fetch(url, { headers: HEADERS });
         const dbRelations = await res.json();
         
-        // 2. DBに存在するフレンドのUUIDリストを作成
         const dbUuids = dbRelations.map(rel => (rel.user_a === myUUID) ? rel.user_b : rel.user_a);
         
-        // 3. 【重要】LocalStorageをDBの状態に「完全上書き」する（古いUUIDを残さない）
+        // ローカルストレージを同期
         friendUuids = dbUuids;
         localStorage.setItem('chat_friend_uuids', JSON.stringify(friendUuids));
 
-        // 4. 表示用データの再構築
         const updatedFriends = [];
         for (const uid of friendUuids) {
             const resN = await fetch(`${SB_URL}/users?uuid=eq.${uid}&select=display_name`, { headers: HEADERS });
@@ -57,10 +59,9 @@ async function syncFriends() {
             updatedFriends.push({ uuid: uid, name: name });
         }
         
-        // 5. メモリ内のリストを更新
         friends = updatedFriends;
 
-        // 6. もし今チャットしている相手がDBのリストから消えていたら、即座に画面をクリア
+        // 現在のチャット相手が削除されていたらクリア
         if (currentFriendUUID && !dbUuids.includes(currentFriendUUID)) {
             currentFriendUUID = null;
             document.getElementById('chat-container').innerHTML = '';
@@ -73,13 +74,13 @@ async function syncFriends() {
     } catch (e) { console.error("Sync Error:", e); }
 }
 
-// 自分で削除ボタンを押した時のDB送信処理
+// フレンド削除（修正版）
 window.removeFriend = async (targetUuid) => {
-    if (!confirm("フレンドを解除しますか？")) return;
+    if (!confirm("フレンドを解除しますか？\n相手のリストからもあなたが消去されます。")) return;
     try {
-        // DBに対して削除リクエストを送信
-        const condition = `or(and(user_a.eq.${myUUID},user_b.eq.${targetUuid}),and(user_a.eq.${targetUuid},user_b.eq.${myUUID}))`;
-        const url = `${SB_URL}/friend_relations?${condition}`;
+        // クエリパラメータを正しく構築（URLエンコードされるため、文字列として結合）
+        const cond = `or(and(user_a.eq.${myUUID},user_b.eq.${targetUuid}),and(user_a.eq.${targetUuid},user_b.eq.${myUUID}))`;
+        const url = `${SB_URL}/friend_relations?${cond}`;
         
         const res = await fetch(url, { 
             method: 'DELETE', 
@@ -87,21 +88,36 @@ window.removeFriend = async (targetUuid) => {
         });
 
         if (res.ok) {
-            // DB削除が成功したら、即座にメモリと表示をクリアして同期
+            // DB削除成功後、即座にメモリと表示を更新
             friends = friends.filter(f => f.uuid !== targetUuid);
             friendUuids = friendUuids.filter(u => u !== targetUuid);
             localStorage.setItem('chat_friend_uuids', JSON.stringify(friendUuids));
-            await syncFriends(); 
+            
+            if (currentFriendUUID === targetUuid) {
+                currentFriendUUID = null;
+                document.getElementById('chat-container').innerHTML = '';
+                document.getElementById('chat-with-name').innerText = '相手を選択してください';
+                document.getElementById('notify-area').style.display = 'none';
+            }
+            
+            renderFriendList();
+            renderDeleteList();
+            console.log("削除成功");
+        } else {
+            const err = await res.json();
+            console.error("削除エラー:", err);
+            alert("削除に失敗しました。RLSの設定を確認してください。");
         }
-    } catch (e) { console.error("削除エラー:", e); }
+    } catch (e) { console.error("Network Error:", e); }
 };
 
 // --- 6. メッセージ機能 ---
 async function loadChatHistory(friendUuid, silent = true) {
     if (!friendUuid) return;
     try {
-        const filter = `and(from_uuid.eq.${myUUID},to_uuid.eq.${friendUuid}),and(from_uuid.eq.${friendUuid},to_uuid.eq.${myUUID})`;
-        const url = `${SB_URL}/chat_messages?select=*&or=(${filter})&order=created_at.asc`;
+        // メッセージ取得クエリ
+        const cond = `or(and(from_uuid.eq.${myUUID},to_uuid.eq.${friendUuid}),and(from_uuid.eq.${friendUuid},to_uuid.eq.${myUUID}))`;
+        const url = `${SB_URL}/chat_messages?select=*&${cond}&order=created_at.asc`;
         const res = await fetch(url, { headers: HEADERS });
         const history = await res.json();
         
@@ -124,7 +140,7 @@ async function loadChatHistory(friendUuid, silent = true) {
             lastMsgCount = history.length;
             container.scrollTop = container.scrollHeight;
         }
-    } catch (e) {}
+    } catch (e) { console.error("Load Chat Error:", e); }
 }
 
 // --- 7. UI表示 ---
@@ -165,25 +181,37 @@ function renderDeleteList() {
 
 // --- 8. 各種アクション ---
 window.addFriend = async () => {
-    const code = document.getElementById('friend-code-input').value.trim().toUpperCase();
+    const input = document.getElementById('friend-code-input');
+    const code = input.value.trim().toUpperCase();
+    if (!code) return;
+
     const res = await fetch(`${SB_URL}/friend_codes?code=eq.${code}&select=uuid`, { headers: HEADERS });
     const data = await res.json();
+    
     if (data.length > 0 && data[0].uuid !== myUUID) {
         await fetch(`${SB_URL}/friend_relations`, { 
             method: 'POST', 
             headers: HEADERS, 
             body: JSON.stringify({ user_a: myUUID, user_b: data[0].uuid }) 
         });
+        input.value = '';
         await syncFriends(); 
         closeAllModals();
+    } else {
+        alert("無効なコード、または自分自身です。");
     }
 };
 
 window.saveMyName = async () => {
     const val = document.getElementById('my-name-input').value.trim();
     if (val) {
-        myDisplayName = val; localStorage.setItem('chat_my_name', val);
-        await fetch(`${SB_URL}/users`, { method: 'POST', headers: { ...HEADERS, 'Prefer': 'resolution=merge-duplicates' }, body: JSON.stringify({ uuid: myUUID, display_name: val }) });
+        myDisplayName = val; 
+        localStorage.setItem('chat_my_name', val);
+        await fetch(`${SB_URL}/users`, { 
+            method: 'POST', 
+            headers: { ...HEADERS, 'Prefer': 'resolution=merge-duplicates' }, 
+            body: JSON.stringify({ uuid: myUUID, display_name: val }) 
+        });
         closeAllModals();
     }
 };
@@ -205,7 +233,10 @@ window.showSettingsModal = () => {
 };
 
 window.closeAllModals = () => { document.querySelectorAll('.modal, .overlay').forEach(el => el.style.display = 'none'); };
-window.copyUUID = () => { navigator.clipboard.writeText(myUUID); };
+window.copyUUID = () => { 
+    navigator.clipboard.writeText(myUUID);
+    alert("UUIDをコピーしました");
+};
 
 async function checkMyStatus() {
     try {
@@ -222,8 +253,9 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     document.getElementById('send-btn').onclick = async () => {
         const input = document.getElementById('msg-input');
-        if (!input.value.trim() || !currentFriendUUID) return;
         const content = input.value.trim();
+        if (!content || !currentFriendUUID) return;
+        
         input.value = '';
         await fetch(`${SB_URL}/chat_messages`, { 
             method: 'POST', 
@@ -233,7 +265,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         loadChatHistory(currentFriendUUID, true);
     };
 
+    // ループ処理
     setInterval(() => { if (currentFriendUUID) loadChatHistory(currentFriendUUID, false); }, 3000);
-    setInterval(syncFriends, 5000); // 5秒ごとにDBと同期。削除の反映場所
-    setInterval(checkMyStatus, 30000);
+    setInterval(syncFriends, 10000); // 同期頻度を少し下げて負荷を調整（任意）
 });
