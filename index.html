@@ -15,7 +15,6 @@
             --chat-bg: #ebebeb;
         }
 
-        /* 画面全体の高さ制御 */
         html, body { 
             height: 100%; 
             height: 100dvh; 
@@ -40,15 +39,27 @@
             height: 100%;
         }
 
+        /* 通知トグル：スマホでは常に表示 */
+        .notify-toggle-container { 
+            display: flex; /* 初期表示をflexに変更 */
+            flex-direction: column; /* スマホでは縦並びで見やすく */
+            align-items: center; 
+            gap: 4px; 
+            color: white; 
+            font-size: 10px; 
+            margin-bottom: 5px; 
+        }
+
         @media (min-width: 768px) {
             #sidebar { transition: width 0.3s; }
             #sidebar:hover { width: 200px; }
             #sidebar:hover .friend-name { display: inline; }
             #sidebar:hover .friend-icon { width: 180px; justify-content: flex-start; padding-left: 10px; }
-            #sidebar:hover .notify-toggle-container { display: flex; }
+            #sidebar:hover .notify-toggle-container { flex-direction: row; font-size: 12px; gap: 8px; }
+            /* PC版ではホバーするまで名前は隠す */
+            .friend-name { display: none; }
         }
 
-        .notify-toggle-container { display: none; align-items: center; gap: 8px; color: white; font-size: 12px; margin-bottom: 5px; }
         .switch { position: relative; display: inline-block; width: 34px; height: 20px; }
         .switch input { opacity: 0; width: 0; height: 0; }
         .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px; }
@@ -63,7 +74,7 @@
             border: 3px solid transparent; transition: 0.2s; flex-shrink: 0; 
         }
         .friend-icon.active { border-color: var(--my-bubble) !important; background: #5d6d6e !important; }
-        .friend-name { display: none; margin-left: 10px; font-size: 14px; white-space: nowrap; color: white; }
+        .friend-name { margin-left: 10px; font-size: 14px; white-space: nowrap; color: white; }
 
         /* --- メインエリア --- */
         #main-area { 
@@ -84,23 +95,30 @@
         .msg.other { align-self: flex-start; background: white; border-top-left-radius: 2px; }
         .msg img { max-width: 100%; border-radius: 10px; cursor: pointer; display: block; margin: 5px 0; }
 
-        /* --- 入力フォーム（高さ調整可能） --- */
+        /* --- 入力フォーム（見切れ対策） --- */
         .input-area { 
-            background: var(--input-bg); padding: 10px 15px; 
-            display: flex; gap: 10px; border-top: 1px solid #ddd; align-items: center;
+            background: var(--input-bg); 
+            padding: 10px 10px; /* 左右パディングを少し削る */
+            display: flex; 
+            gap: 8px; 
+            border-top: 1px solid #ddd; 
+            align-items: center;
             flex-shrink: 0;
-            /* 下記の +10px を変更することで高さを自由に調整できます */
             padding-bottom: calc(env(safe-area-inset-bottom) + 10px); 
         }
 
         input[type="text"] { 
-            flex: 1; border: 1px solid #ccc; padding: 10px 15px; 
-            border-radius: 25px; outline: none; 
+            flex: 1; 
+            min-width: 0; /* 重要：これでボタンを押し出さなくなる */
+            border: 1px solid #ccc; 
+            padding: 10px 12px; 
+            border-radius: 25px; 
+            outline: none; 
             font-size: 16px; 
         }
 
-        #img-btn { background: #95a5a6; color: white; border: none; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; font-size: 20px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-        #send-btn { background: var(--header-bg); color: white; border: none; padding: 10px 18px; border-radius: 20px; cursor: pointer; font-weight: bold; }
+        #img-btn { background: #95a5a6; color: white; border: none; width: 38px; height: 38px; border-radius: 50%; cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+        #send-btn { background: var(--header-bg); color: white; border: none; padding: 10px 15px; border-radius: 20px; cursor: pointer; font-weight: bold; flex-shrink: 0; }
 
         /* --- モーダル --- */
         .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 25px; border-radius: 15px; box-shadow: 0 5px 30px rgba(0,0,0,0.4); z-index: 1000; width: 85%; max-width: 320px; }
@@ -115,9 +133,10 @@
 
 <div id="sidebar">
     <div class="friend-icon" onclick="showFriendModal()" style="background: #4e5d6c;">
-        <span>＋</span><span class="friend-name">フレンド追加</span>
+        <span>＋</span><span class="friend-name">追加</span>
     </div>
-    <div id="notify-area" style="display: none; padding: 5px 0;">
+    
+    <div id="notify-area" style="padding: 5px 0;">
         <div class="notify-toggle-container">
             <span>通知</span>
             <label class="switch">
@@ -126,8 +145,10 @@
             </label>
         </div>
     </div>
+
     <hr style="width: 60%; border: 0; border-top: 1px solid #555; margin: 5px 0;">
     <div id="friend-list-container" style="display: flex; flex-direction: column; gap: 10px; width: 100%; align-items: center; flex: 1; overflow-y: auto;"></div>
+    
     <div style="padding-bottom: 15px;">
         <div class="friend-icon" onclick="showSettingsModal()" style="background: #7f8c8d;">
             <span>⚙️</span><span class="friend-name">設定</span>
@@ -143,7 +164,7 @@
     <div class="input-area">
         <button id="img-btn">📷</button>
         <input type="file" id="image-input" accept="image/*" style="display:none;">
-        <input type="text" id="msg-input" placeholder="メッセージを入力..." autocomplete="off">
+        <input type="text" id="msg-input" placeholder="メッセージ..." autocomplete="off">
         <button id="send-btn">送信</button>
     </div>
 </div>
@@ -153,7 +174,7 @@
 <div id="friend-modal" class="modal">
     <h3>フレンド追加</h3>
     <p>あなたのコード: <strong id="my-temp-code" style="font-size: 24px; color: #e67e22;">----</strong></p>
-    <input type="text" id="friend-code-input" placeholder="相手の4桁コードを入力" maxlength="4" oninput="convertFullWidthNum(this)">
+    <input type="text" id="friend-code-input" placeholder="相手の4桁コードを入力" maxlength="4" oninput="convertFullWidthNum(this)" style="width:100%; padding:10px; box-sizing:border-box; border:1px solid #ccc; border-radius:8px;">
     <button onclick="addFriend()" style="width:100%; padding:12px; background:var(--my-bubble); border:none; border-radius:8px; font-weight:bold; margin-top:10px;">登録</button>
 </div>
 
@@ -172,11 +193,10 @@
 </div>
 
 <script>
-    // 全角数字を半角に自動変換する関数
     function convertFullWidthNum(input) {
         input.value = input.value.replace(/[０-９]/g, function(s) {
             return String.fromCharCode(s.charCodeAt(0) - 0xFEE0);
-        }).replace(/[^0-9]/g, ''); // 数字以外は削除
+        }).replace(/[^0-9]/g, '');
     }
 </script>
 <script src="chat.js"></script>
