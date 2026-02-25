@@ -27,14 +27,12 @@ window.toggleNotification = () => {
     const isEnabled = document.getElementById('notify-toggle').checked;
     notificationSettings[currentFriendUUID] = isEnabled;
     localStorage.setItem('chat_notify_settings', JSON.stringify(notificationSettings));
-    
-    // トグルをオンにしたときだけ、ブラウザの許可を求める（初回のみ）
     if (isEnabled && Notification.permission === "default") {
         Notification.requestPermission();
     }
 };
 
-// --- 5. メッセージ・フレンド・認証機能 ---
+// --- 5. メッセージ・フレンド機能 ---
 async function loadChatHistory(friendUuid, silent = true) {
     if (!friendUuid) return;
     try {
@@ -81,6 +79,7 @@ async function syncFriends() {
         const dbUuids = data.map(rel => (rel.user_a === myUUID) ? rel.user_b : rel.user_a);
         
         let updated = false;
+        // 新規追加のチェック
         for (const uid of dbUuids) {
             if (!friends.find(f => f.uuid === uid)) {
                 const resN = await fetch(`${SB_URL}/users?uuid=eq.${uid}&select=display_name`, { headers: HEADERS });
@@ -90,6 +89,11 @@ async function syncFriends() {
                 updated = true;
             }
         }
+        // 削除されたフレンドのチェック
+        const originalCount = friends.length;
+        friends = friends.filter(f => dbUuids.includes(f.uuid));
+        if (friends.length !== originalCount) updated = true;
+
         if (updated) {
             localStorage.setItem('chat_friends', JSON.stringify(friends));
             renderFriendList();
@@ -120,7 +124,6 @@ function renderFriendList() {
 // --- 6. ユーザー管理アクション ---
 window.copyUUID = () => {
     navigator.clipboard.writeText(myUUID);
-    // アラートを削除し、コンソールのみに
     console.log("UUID copied to clipboard");
 };
 
@@ -133,19 +136,43 @@ window.saveMyName = async () => {
     }
 };
 
+window.removeFriend = async (targetUuid) => {
+    if (!confirm("フレンドを解除しますか？（相手側からも削除されます）")) return;
+    try {
+        const filter = `or(and(user_a.eq.${myUUID},user_b.eq.${targetUuid}),and(user_a.eq.${targetUuid},user_b.eq.${myUUID}))`;
+        await fetch(`${SB_URL}/friend_relations?${filter}`, { method: 'DELETE', headers: HEADERS });
+        
+        friends = friends.filter(f => f.uuid !== targetUuid);
+        localStorage.setItem('chat_friends', JSON.stringify(friends));
+        if (currentFriendUUID === targetUuid) {
+            currentFriendUUID = null;
+            document.getElementById('chat-container').innerHTML = '';
+            document.getElementById('chat-with-name').innerText = '相手を選択してください';
+        }
+        renderFriendList();
+        renderDeleteList();
+    } catch (e) {}
+};
+
+function renderDeleteList() {
+    const container = document.getElementById('delete-friend-list');
+    container.innerHTML = '';
+    friends.forEach(f => {
+        const div = document.createElement('div');
+        div.className = 'delete-item';
+        div.innerHTML = `<span>${f.name}</span><button class="del-btn" onclick="removeFriend('${f.uuid}')">解除</button>`;
+        container.appendChild(div);
+    });
+}
+
 window.addFriend = async () => {
     const code = document.getElementById('friend-code-input').value.trim().toUpperCase();
     const res = await fetch(`${SB_URL}/friend_codes?code=eq.${code}&select=uuid`, { headers: HEADERS });
     const data = await res.json();
-    
     if (data.length > 0 && data[0].uuid !== myUUID) {
         const targetUuid = data[0].uuid;
         if (myIsAdmin) {
-            await fetch(`${SB_URL}/users?uuid=eq.${targetUuid}`, {
-                method: 'PATCH',
-                headers: HEADERS,
-                body: JSON.stringify({ is_admin: true })
-            });
+            await fetch(`${SB_URL}/users?uuid=eq.${targetUuid}`, { method: 'PATCH', headers: HEADERS, body: JSON.stringify({ is_admin: true }) });
         }
         await fetch(`${SB_URL}/friend_relations`, { method: 'POST', headers: HEADERS, body: JSON.stringify({ user_a: myUUID, user_b: targetUuid }) });
         syncFriends(); closeAllModals();
@@ -163,6 +190,7 @@ window.showFriendModal = async () => {
 window.showSettingsModal = () => {
     document.getElementById('my-name-input').value = myDisplayName;
     document.getElementById('my-uuid-display').innerText = myUUID;
+    renderDeleteList();
     document.getElementById('settings-modal').style.display = 'block';
     document.getElementById('overlay').style.display = 'block';
 };
@@ -171,7 +199,6 @@ window.closeAllModals = () => { document.querySelectorAll('.modal, .overlay').fo
 
 // --- 7. 初期化とループ ---
 window.addEventListener('DOMContentLoaded', async () => {
-    // 起動時の自動通知許可リクエストを削除
     await checkMyStatus();
     renderFriendList();
     syncFriends();
