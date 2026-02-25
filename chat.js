@@ -12,126 +12,10 @@ const HEADERS = { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Conten
 let currentFriendUUID = null;
 let friends = JSON.parse(localStorage.getItem('chat_friends') || '[]');
 let lastMsgCount = 0;
-let pc = null;
-let localStream = null;
-const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
+// 通知設定 (キー: friendUUID, 値: boolean)
+let notificationSettings = JSON.parse(localStorage.getItem('chat_notif_settings') || '{}');
 
-// --- 4. 通話監視ロジック (最優先) ---
-async function watchCalls() {
-    try {
-        // console.log("Polling for calls..."); // Firefoxデバッグ用
-        const res = await fetch(`${SB_URL}/friend_calls?to_uuid=eq.${myUUID}&from_uuid=neq.${myUUID}&order=created_at.desc&limit=1`, { headers: HEADERS });
-        if (!res.ok) return;
-        const data = await res.json();
-        
-        if (!data || data.length === 0) return;
-        const signal = data[0];
-        
-        // 8秒以上前の古い信号は無視
-        const age = Date.now() - new Date(signal.created_at).getTime();
-        if (age > 8000) return;
-
-        if (signal.type === 'offer' && !pc) {
-            window.incomingOffer = signal;
-            showCallUI(signal.from_uuid, true);
-        } else if (signal.type === 'answer' && pc) {
-            if (pc.signalingState === "have-local-offer") {
-                await pc.setRemoteDescription(new RTCSessionDescription(signal.payload));
-                document.getElementById('call-status').innerText = "通話中";
-            }
-        } else if (signal.type === 'candidate' && pc) {
-            if (pc.remoteDescription) {
-                await pc.addIceCandidate(new RTCIceCandidate(signal.payload)).catch(()=>{});
-            }
-        } else if (signal.type === 'hangup') {
-            endCall(false);
-        }
-    } catch (e) {
-        console.error("Watch Loop Error:", e);
-    }
-}
-
-// 常に監視を実行
-setInterval(watchCalls, 1500);
-
-// --- 5. 通話制御機能 ---
-async function setupWebRTC(isCaller, targetUuid) {
-    if (pc) return;
-    pc = new RTCPeerConnection(rtcConfig);
-
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-    } catch (e) {
-        alert("マイクへのアクセスを許可してください");
-        return endCall();
-    }
-
-    pc.ontrack = (event) => {
-        const remoteAudio = document.getElementById('remote-audio');
-        if (remoteAudio) remoteAudio.srcObject = event.streams[0];
-    };
-
-    pc.onicecandidate = (event) => {
-        if (event.candidate) sendCallSignal(targetUuid, 'candidate', event.candidate);
-    };
-
-    if (isCaller) {
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        await sendCallSignal(targetUuid, 'offer', offer);
-    }
-}
-
-async function sendCallSignal(to, type, payload) {
-    try {
-        await fetch(`${SB_URL}/friend_calls`, {
-            method: 'POST',
-            headers: HEADERS,
-            body: JSON.stringify({ from_uuid: myUUID, to_uuid: to, type: type, payload: payload })
-        });
-    } catch (e) { console.error("Signal Send Error:", e); }
-}
-
-function showCallUI(targetUuid, isIncoming) {
-    const modal = document.getElementById('call-modal');
-    const overlay = document.getElementById('overlay');
-    const partner = friends.find(f => f.uuid === targetUuid);
-    
-    document.getElementById('call-partner-name').innerText = partner ? partner.name : `不明なユーザー(${targetUuid.substring(0,4)})`;
-    document.getElementById('call-status').innerText = isIncoming ? "着信中..." : "発信中...";
-    document.getElementById('call-answer-btn').style.display = isIncoming ? "inline-block" : "none";
-    
-    modal.style.display = 'block';
-    overlay.style.display = 'block';
-
-    document.getElementById('call-answer-btn').onclick = async () => {
-        await setupWebRTC(false, targetUuid);
-        if (window.incomingOffer) {
-            await pc.setRemoteDescription(new RTCSessionDescription(window.incomingOffer.payload));
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            await sendCallSignal(targetUuid, 'answer', answer);
-            document.getElementById('call-status').innerText = "通話中";
-            document.getElementById('call-answer-btn').style.display = 'none';
-        }
-    };
-}
-
-function endCall(sendSignal = true) {
-    if (sendSignal) {
-        const target = currentFriendUUID || (window.incomingOffer ? window.incomingOffer.from_uuid : null);
-        if (target) sendCallSignal(target, 'hangup', {});
-    }
-    if (pc) { pc.close(); pc = null; }
-    if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
-    const remoteAudio = document.getElementById('remote-audio');
-    if (remoteAudio) remoteAudio.srcObject = null;
-    window.incomingOffer = null;
-    closeAllModals();
-}
-
-// --- 6. 名前・フレンド管理 ---
+// --- 4. 名前・フレンド管理 ---
 async function pushNameToDB(name) {
     try {
         await fetch(`${SB_URL}/users`, {
@@ -157,8 +41,19 @@ async function loadChatHistory(friendUuid) {
         const url = `${SB_URL}/chat_messages?select=*&or=(${filter})&order=created_at.asc`;
         const res = await fetch(url, { headers: HEADERS });
         const history = await res.json();
+        
         if (history.length !== lastMsgCount) {
             const container = document.getElementById('chat-container');
+            const isFirstLoad = lastMsgCount === 0;
+            
+            // 通知判定
+            if (!isFirstLoad && history.length > lastMsgCount) {
+                const lastMsg = history[history.length - 1];
+                if (lastMsg.from_uuid !== myUUID && notificationSettings[friendUuid]) {
+                    new Notification("新着メッセージ", { body: lastMsg.content });
+                }
+            }
+
             container.innerHTML = '';
             history.forEach(msg => {
                 const div = document.createElement('div');
@@ -179,23 +74,34 @@ async function syncFriends() {
         const data = await res.json();
         const dbUuids = data.map(rel => (rel.user_a === myUUID) ? rel.user_b : rel.user_a);
         
-        let updated = false;
-        // リストにいないUUIDがあれば追加
+        let changed = false;
+        // DBにあるフレンドの名前を最新に更新（相手が名前を変えた場合に備える）
+        const updatedFriends = [];
         for (const uid of dbUuids) {
-            if (!friends.find(f => f.uuid === uid)) {
-                const name = await getFriendName(uid);
-                friends.push({ uuid: uid, name: name });
-                updated = true;
+            const latestName = await getFriendName(uid);
+            const existing = friends.find(f => f.uuid === uid);
+            if (!existing || existing.name !== latestName) {
+                changed = true;
             }
+            updatedFriends.push({ uuid: uid, name: latestName });
         }
-        if (updated) {
+
+        // 削除されたフレンドのチェック
+        if (friends.length !== updatedFriends.length) changed = true;
+
+        if (changed) {
+            friends = updatedFriends;
             localStorage.setItem('chat_friends', JSON.stringify(friends));
             renderFriendList();
+            if (currentFriendUUID) {
+                const f = friends.find(f => f.uuid === currentFriendUUID);
+                if (f) document.getElementById('chat-with-name').innerText = `${f.name} とのチャット`;
+            }
         }
     } catch (e) {}
 }
 
-// --- 7. UI描画 ---
+// --- 5. UI描画 ---
 function renderFriendList() {
     const container = document.getElementById('friend-list-container');
     container.innerHTML = '';
@@ -207,14 +113,41 @@ function renderFriendList() {
             currentFriendUUID = f.uuid;
             lastMsgCount = 0;
             document.getElementById('chat-with-name').innerText = `${f.name} とのチャット`;
-            document.getElementById('call-start-btn').style.display = 'block';
             document.getElementById('chat-container').innerHTML = '';
+            updateNotifBtnUI();
             renderFriendList();
             loadChatHistory(f.uuid);
         };
         container.appendChild(div);
     });
 }
+
+function updateNotifBtnUI() {
+    const btn = document.getElementById('notif-toggle-btn');
+    if (!currentFriendUUID) {
+        btn.style.display = 'none';
+        return;
+    }
+    btn.style.display = 'flex';
+    const isOn = notificationSettings[currentFriendUUID] || false;
+    btn.className = isOn ? 'active' : '';
+    document.getElementById('notif-icon').innerText = isOn ? '🔔' : '🔕';
+    document.getElementById('notif-status').innerText = isOn ? 'ON' : 'OFF';
+}
+
+window.toggleNotification = () => {
+    if (!currentFriendUUID) return;
+    
+    // ブラウザの通知許可リクエスト
+    if (Notification.permission === "default") {
+        Notification.requestPermission();
+    }
+
+    const currentStatus = notificationSettings[currentFriendUUID] || false;
+    notificationSettings[currentFriendUUID] = !currentStatus;
+    localStorage.setItem('chat_notif_settings', JSON.stringify(notificationSettings));
+    updateNotifBtnUI();
+};
 
 function renderDeleteFriendList() {
     const container = document.getElementById('delete-friend-list');
@@ -228,20 +161,26 @@ function renderDeleteFriendList() {
     });
 }
 
-// --- 8. 窓口アクション ---
+// --- 6. アクション ---
 window.deleteFriend = async (uuid) => {
     if (!confirm("削除しますか？")) return;
     const query = `or=(and(user_a.eq.${myUUID},user_b.eq.${uuid}),and(user_a.eq.${uuid},user_b.eq.${myUUID}))`;
     await fetch(`${SB_URL}/friend_relations?${query}`, { method: 'DELETE', headers: HEADERS });
     friends = friends.filter(f => f.uuid !== uuid);
     localStorage.setItem('chat_friends', JSON.stringify(friends));
-    if (currentFriendUUID === uuid) { currentFriendUUID = null; document.getElementById('call-start-btn').style.display = 'none'; }
+    if (currentFriendUUID === uuid) { currentFriendUUID = null; document.getElementById('notif-toggle-btn').style.display = 'none'; }
     renderFriendList(); renderDeleteFriendList();
 };
 
 window.saveMyName = async () => {
     const val = document.getElementById('my-name-input').value.trim();
-    if (val) { myDisplayName = val; localStorage.setItem('chat_my_name', val); await pushNameToDB(val); closeAllModals(); syncFriends(); }
+    if (val) { 
+        myDisplayName = val; 
+        localStorage.setItem('chat_my_name', val); 
+        await pushNameToDB(val); 
+        closeAllModals(); 
+        syncFriends(); 
+    }
 };
 
 window.addFriend = async () => {
@@ -271,7 +210,7 @@ window.showSettingsModal = () => {
 
 window.closeAllModals = () => { document.querySelectorAll('.modal, .overlay').forEach(el => el.style.display = 'none'); };
 
-// --- 9. DOM読込後の初期化 ---
+// --- 7. 初期化 ---
 window.addEventListener('DOMContentLoaded', () => {
     pushNameToDB(myDisplayName);
     
@@ -283,19 +222,10 @@ window.addEventListener('DOMContentLoaded', () => {
         loadChatHistory(currentFriendUUID);
     };
 
-    document.getElementById('call-start-btn').onclick = () => {
-        if (currentFriendUUID) {
-            showCallUI(currentFriendUUID, false);
-            setupWebRTC(true, currentFriendUUID);
-        }
-    };
-
-    document.getElementById('call-hangup-btn').onclick = () => endCall(true);
-
     renderFriendList();
     syncFriends();
 
     // 定期更新
-    setInterval(() => { if (currentFriendUUID) loadChatHistory(currentFriendUUID); }, 4000);
-    setInterval(syncFriends, 10000);
+    setInterval(() => { if (currentFriendUUID) loadChatHistory(currentFriendUUID); }, 3000);
+    setInterval(syncFriends, 8000); // 名前変更を反映するために定期同期
 });
