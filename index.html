@@ -1,132 +1,263 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Easy Chat - Lite</title>
-    <style>
-        :root { 
-            --line-green: #7494c0; 
-            --my-bubble: #8de055; 
-            --sidebar-bg: #2c3e50; 
-            --header-bg: #35495e;
-            --input-bg: #f8f8f8;
-            --chat-bg: #ebebeb;
+<!-- chat.js -->
+<script>
+// --- 1. ユーザー管理 ---
+let myUUID = localStorage.getItem('chat_user_uuid') || crypto.randomUUID();
+localStorage.setItem('chat_user_uuid', myUUID);
+let myDisplayName = localStorage.getItem('chat_my_name') || "自分";
+
+// --- 2. Supabase設定 ---
+const SB_URL = 'https://dkyhhoqzphpwwnnwmdzq.supabase.co/rest/v1';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRreWhob3F6cGhwd3dubndtZHpxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MzIyMjEsImV4cCI6MjA4NzUwODIyMX0.ZDWsgWzwZFdBGv31njaNL_QkJAjwHPZj6IFutIOlfPk';
+const HEADERS = { 
+    'apikey': SB_KEY, 
+    'Authorization': `Bearer ${SB_KEY}`, 
+    'Content-Type': 'application/json', 
+    'Prefer': 'return=representation' 
+};
+
+// --- 3. 状態管理 ---
+let currentFriendUUID = null;
+let friendUuids = JSON.parse(localStorage.getItem('chat_friend_uuids') || '[]');
+let friends = []; 
+let lastMsgCount = 0;
+let notificationSettings = JSON.parse(localStorage.getItem('chat_notify_settings') || '{}');
+let myIsAdmin = false;
+
+// --- 4. 通知機能 ---
+function sendBrowserNotification(title, body) {
+    if (Notification.permission === "granted") {
+        new Notification(title, { body: body });
+    }
+}
+
+window.toggleNotification = () => {
+    if (!currentFriendUUID) return;
+    const isEnabled = document.getElementById('notify-toggle').checked;
+    notificationSettings[currentFriendUUID] = isEnabled;
+    localStorage.setItem('chat_notify_settings', JSON.stringify(notificationSettings));
+    if (isEnabled && Notification.permission === "default") {
+        Notification.requestPermission();
+    }
+};
+
+// --- 5. 同期・削除ロジック ---
+async function syncFriends() {
+    try {
+        const url = `${SB_URL}/friend_relations?or=(user_a.eq.${myUUID},user_b.eq.${myUUID})`;
+        const res = await fetch(url, { headers: HEADERS });
+        const dbRelations = await res.json();
+        
+        const dbUuids = dbRelations.map(rel => (rel.user_a === myUUID) ? rel.user_b : rel.user_a);
+        
+        friendUuids = dbUuids;
+        localStorage.setItem('chat_friend_uuids', JSON.stringify(friendUuids));
+
+        const updatedFriends = [];
+        for (const uid of friendUuids) {
+            const resN = await fetch(`${SB_URL}/users?uuid=eq.${uid}&select=display_name`, { headers: HEADERS });
+            const dataN = await resN.json();
+            const name = dataN[0]?.display_name || `User-${uid.substring(0,4)}`;
+            updatedFriends.push({ uuid: uid, name: name });
+        }
+        
+        friends = updatedFriends;
+
+        if (currentFriendUUID && !dbUuids.includes(currentFriendUUID)) {
+            currentFriendUUID = null;
+            document.getElementById('chat-container').innerHTML = '';
+            document.getElementById('chat-with-name').innerText = '相手が削除されました';
+            document.getElementById('notify-area').style.display = 'none';
         }
 
-        html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--sidebar-bg); display: flex; }
+        renderFriendList();
+        if (document.getElementById('settings-modal').style.display === 'block') renderDeleteList();
+    } catch (e) { console.error("Sync Error:", e); }
+}
 
-        /* サイドバー */
-        #sidebar { width: 70px; background: var(--sidebar-bg); display: flex; flex-direction: column; align-items: center; padding: 10px 0; gap: 15px; flex-shrink: 0; border-right: 1px solid rgba(0,0,0,0.1); }
-        @media (min-width: 768px) {
-            #sidebar { transition: width 0.3s; }
-            #sidebar:hover { width: 200px; }
-            #sidebar:hover .friend-name { display: inline; }
-            #sidebar:hover .friend-icon { width: 180px; justify-content: flex-start; padding-left: 10px; }
-            #sidebar:hover .notify-toggle-container { display: flex; }
+window.removeFriend = async (targetUuid) => {
+    if (!confirm("本当に削除しますか？")) return;
+    try {
+        const cond = `or=(and(user_a.eq.${myUUID},user_b.eq.${targetUuid}),and(user_a.eq.${targetUuid},user_b.eq.${myUUID}))`;
+        const url = `${SB_URL}/friend_relations?${cond}`;
+        
+        const res = await fetch(url, { 
+            method: 'DELETE', 
+            headers: HEADERS 
+        });
+
+        if (res.ok) {
+            friends = friends.filter(f => f.uuid !== targetUuid);
+            friendUuids = friendUuids.filter(u => u !== targetUuid);
+            localStorage.setItem('chat_friend_uuids', JSON.stringify(friendUuids));
+            
+            if (currentFriendUUID === targetUuid) {
+                currentFriendUUID = null;
+                document.getElementById('chat-container').innerHTML = '';
+                document.getElementById('chat-with-name').innerText = '相手を選択してください';
+                document.getElementById('notify-area').style.display = 'none';
+            }
+            
+            renderFriendList();
+            renderDeleteList();
+        } else {
+            const err = await res.json();
+            alert("削除失敗");
+            console.error(err);
         }
+    } catch (e) { console.error("Network Error:", e); }
+};
 
-        .notify-toggle-container { display: none; align-items: center; gap: 8px; color: white; font-size: 12px; margin-bottom: 5px; }
-        .switch { position: relative; display: inline-block; width: 34px; height: 20px; }
-        .switch input { opacity: 0; width: 0; height: 0; }
-        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px; }
-        .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
-        input:checked + .slider { background-color: var(--my-bubble); }
-        input:checked + .slider:before { transform: translateX(14px); }
-
-        .friend-icon { width: 45px; height: 45px; background: #95a5a6; border-radius: 12px; cursor: pointer; display: flex; justify-content: center; align-items: center; color: white; font-weight: bold; overflow: hidden; border: 2px solid transparent; transition: 0.2s; flex-shrink: 0; }
-        .friend-icon.active { border-color: var(--my-bubble); background: #5d6d6e !important; }
-        .friend-name { display: none; margin-left: 10px; font-size: 14px; white-space: nowrap; color: white; }
-
-        #main-area { flex: 1; display: flex; flex-direction: column; background: var(--chat-bg); height: 100vh; }
-        header { background: var(--header-bg); color: white; padding: 15px; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; }
+// --- 6. メッセージ機能 ---
+async function loadChatHistory(friendUuid, silent = true) {
+    if (!friendUuid) return;
+    try {
+        const cond = `or=(and(from_uuid.eq.${myUUID},to_uuid.eq.${friendUuid}),and(from_uuid.eq.${friendUuid},to_uuid.eq.${myUUID}))`;
+        const url = `${SB_URL}/chat_messages?select=*&${cond}&order=created_at.asc`;
+        const res = await fetch(url, { headers: HEADERS });
+        const history = await res.json();
         
-        #chat-container { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
-        .msg { max-width: 75%; padding: 10px 14px; border-radius: 18px; font-size: 15px; word-wrap: break-word; }
-        .msg.me { align-self: flex-end; background: var(--my-bubble); border-top-right-radius: 2px; }
-        .msg.other { align-self: flex-start; background: white; border-top-left-radius: 2px; }
+        if (history.length > lastMsgCount) {
+            if (!silent && history.length > 0) {
+                const lastMsg = history[history.length - 1];
+                if (lastMsg.from_uuid === friendUuid && notificationSettings[friendUuid] === true) {
+                    const partner = friends.find(f => f.uuid === friendUuid);
+                    sendBrowserNotification(partner ? partner.name : "新着メッセージ", lastMsg.content);
+                }
+            }
+            const container = document.getElementById('chat-container');
+            container.innerHTML = '';
+            history.forEach(msg => {
+                const div = document.createElement('div');
+                div.className = `msg ${msg.from_uuid === myUUID ? 'me' : 'other'}`;
+                div.innerText = msg.content;
+                container.appendChild(div);
+            });
+            lastMsgCount = history.length;
+            container.scrollTop = container.scrollHeight;
+        }
+    } catch (e) { console.error("Load Chat Error:", e); }
+}
 
-        .input-area { background: var(--input-bg); padding: 10px 15px; display: flex; gap: 10px; border-top: 1px solid #ddd; padding-bottom: env(safe-area-inset-bottom); }
-        input[type="text"] { flex: 1; border: 1px solid #ccc; padding: 12px 15px; border-radius: 25px; outline: none; }
-        #send-btn { background: var(--header-bg); color: white; border: none; padding: 10px 18px; border-radius: 20px; cursor: pointer; }
+// --- 7. UI表示 ---
+function renderFriendList() {
+    const container = document.getElementById('friend-list-container');
+    container.innerHTML = '';
+    friends.forEach(f => {
+        const div = document.createElement('div');
+        div.className = `friend-icon ${currentFriendUUID === f.uuid ? 'active' : ''}`;
+        div.innerHTML = `<span>👤</span><span class="friend-name">${f.name}</span>`;
+        div.onclick = () => {
+            currentFriendUUID = f.uuid;
+            lastMsgCount = 0;
+            document.getElementById('chat-with-name').innerText = `${f.name} とのチャット`;
+            document.getElementById('notify-area').style.display = 'block';
+            document.getElementById('notify-toggle').checked = !!notificationSettings[f.uuid];
+            renderFriendList();
+            loadChatHistory(f.uuid, true);
+        };
+        container.appendChild(div);
+    });
+}
 
-        .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 25px; border-radius: 15px; box-shadow: 0 5px 30px rgba(0,0,0,0.4); z-index: 1000; width: 85%; max-width: 320px; }
-        .overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 999; }
+function renderDeleteList() {
+    const container = document.getElementById('delete-friend-list');
+    container.innerHTML = '';
+    if (friends.length === 0) {
+        container.innerHTML = '<div style="font-size:11px; color:#999; margin-top:5px;">登録なし</div>';
+        return;
+    }
+    friends.forEach(f => {
+        const div = document.createElement('div');
+        div.className = 'delete-item';
+        div.innerHTML = `<span>${f.name}</span><button class="del-btn" onclick="removeFriend('${f.uuid}')">解除</button>`;
+        container.appendChild(div);
+    });
+}
+
+// --- 8. 各種アクション ---
+window.addFriend = async () => {
+    const input = document.getElementById('friend-code-input');
+    const code = input.value.trim().toUpperCase();
+    if (!code) return;
+
+    const res = await fetch(`${SB_URL}/friend_codes?code=eq.${code}&select=uuid`, { headers: HEADERS });
+    const data = await res.json();
+    
+    if (data.length > 0 && data[0].uuid !== myUUID) {
+        await fetch(`${SB_URL}/friend_relations`, { 
+            method: 'POST', 
+            headers: HEADERS, 
+            body: JSON.stringify({ user_a: myUUID, user_b: data[0].uuid }) 
+        });
+        input.value = '';
+        await syncFriends(); 
+        closeAllModals();
+    } else {
+        alert("無効");
+    }
+};
+
+window.saveMyName = async () => {
+    const val = document.getElementById('my-name-input').value.trim();
+    if (val) {
+        myDisplayName = val; 
+        localStorage.setItem('chat_my_name', val);
+        await fetch(`${SB_URL}/users`, { 
+            method: 'POST', 
+            headers: { ...HEADERS, 'Prefer': 'resolution=merge-duplicates' }, 
+            body: JSON.stringify({ uuid: myUUID, display_name: val }) 
+        });
+        closeAllModals();
+    }
+};
+
+window.showFriendModal = async () => {
+    const code = Math.floor(1000 + Math.random() * 9000).toString();
+    document.getElementById('my-temp-code').innerText = code;
+    document.getElementById('friend-modal').style.display = 'block';
+    document.getElementById('overlay').style.display = 'block';
+    await fetch(`${SB_URL}/friend_codes`, { method: 'POST', headers: HEADERS, body: JSON.stringify({ code: code, uuid: myUUID }) });
+};
+
+window.showSettingsModal = () => {
+    document.getElementById('my-name-input').value = myDisplayName;
+    document.getElementById('my-uuid-display').innerText = myUUID;
+    renderDeleteList();
+    document.getElementById('settings-modal').style.display = 'block';
+    document.getElementById('overlay').style.display = 'block';
+};
+
+window.closeAllModals = () => { document.querySelectorAll('.modal, .overlay').forEach(el => el.style.display = 'none'); };
+window.copyUUID = () => { navigator.clipboard.writeText(myUUID); };
+
+async function checkMyStatus() {
+    try {
+        const res = await fetch(`${SB_URL}/users?uuid=eq.${myUUID}&select=is_admin`, { headers: HEADERS });
+        const data = await res.json();
+        if (data && data[0]) { myIsAdmin = data[0].is_admin; }
+    } catch (e) {}
+}
+
+// --- 9. 初期化 ---
+window.addEventListener('DOMContentLoaded', async () => {
+    await checkMyStatus();
+    await syncFriends();
+
+    document.getElementById('send-btn').onclick = async () => {
+        const input = document.getElementById('msg-input');
+        const content = input.value.trim();
+        if (!content || !currentFriendUUID) return;
         
-        .uuid-display { font-size: 10px; color: #888; background: #f0f0f0; padding: 8px; border-radius: 5px; word-break: break-all; cursor: pointer; margin-top: 5px; border: 1px solid #ddd; text-align: center; }
-        .uuid-display:active { background: #e0e0e0; }
+        input.value = '';
+        await fetch(`${SB_URL}/chat_messages`, { 
+            method: 'POST', 
+            headers: HEADERS, 
+            body: JSON.stringify({ from_uuid: myUUID, to_uuid: currentFriendUUID, content: content }) 
+        });
+        loadChatHistory(currentFriendUUID, true);
+    };
 
-        .delete-list { margin-top: 20px; max-height: 120px; overflow-y: auto; border-top: 1px solid #eee; padding-top: 10px; }
-        .delete-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; font-size: 13px; border-bottom: 1px solid #f9f9f9; }
-        .del-btn { background: #ff4757; color: white; border: none; border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 11px; }
-    </style>
-</head>
-<body>
-
-<div id="sidebar">
-    <div class="friend-icon" onclick="showFriendModal()" style="background: #4e5d6c;">
-        <span>＋</span><span class="friend-name">フレンド追加</span>
-    </div>
-    
-    <div id="notify-area" style="display: none; padding: 5px 0;">
-        <div class="notify-toggle-container">
-            <span>通知</span>
-            <label class="switch">
-                <input type="checkbox" id="notify-toggle" onchange="toggleNotification()">
-                <span class="slider"></span>
-            </label>
-        </div>
-    </div>
-
-    <hr style="width: 60%; border: 0; border-top: 1px solid #555; margin: 5px 0;">
-    <div id="friend-list-container" style="display: flex; flex-direction: column; gap: 10px; width: 100%; align-items: center; flex: 1; overflow-y: auto;"></div>
-    
-    <div style="padding-bottom: 15px;">
-        <div class="friend-icon" onclick="showSettingsModal()" style="background: #7f8c8d;">
-            <span>⚙️</span><span class="friend-name">設定</span>
-        </div>
-    </div>
-</div>
-
-<div id="main-area">
-    <header>
-        <div id="chat-with-name">相手を選択してください</div>
-    </header>
-    <div id="chat-container"></div>
-    <div class="input-area">
-        <input type="text" id="msg-input" placeholder="メッセージを入力..." autocomplete="off">
-        <button id="send-btn">送信</button>
-    </div>
-</div>
-
-<div id="overlay" class="overlay" onclick="closeAllModals()"></div>
-
-<div id="friend-modal" class="modal">
-    <h3>フレンド追加</h3>
-    <p>あなたのコード: <strong id="my-temp-code" style="font-size: 24px; color: #e67e22;">----</strong></p>
-    <input type="text" id="friend-code-input" placeholder="相手の4桁コードを入力" maxlength="4" style="width:100%; padding:10px; box-sizing:border-box; margin-bottom:10px; border-radius:8px; border:1px solid #ccc;">
-    <button onclick="addFriend()" style="width:100%; padding:12px; background:var(--my-bubble); border:none; border-radius:8px; font-weight:bold;">登録</button>
-</div>
-
-<div id="settings-modal" class="modal">
-    <h3>プロファイル設定</h3>
-    <label style="font-size: 12px; color: #666;">表示名</label>
-    <input type="text" id="my-name-input" style="width:100%; padding:10px; margin-bottom:10px; border:1px solid #ddd; border-radius:8px; box-sizing:border-box;">
-    
-    <label style="font-size: 12px; color: #666;">あなたのUUID (タップでコピー)</label>
-    <div id="my-uuid-display" class="uuid-display" onclick="copyUUID()"></div>
-    
-    <button onclick="saveMyName()" style="width:100%; padding:10px; background:var(--sidebar-bg); color:white; border:none; border-radius:8px; margin-top:15px;">保存</button>
-
-    <div class="delete-list">
-        <label style="font-size: 12px; color: #666;">フレンド解除 (双方のリストから消去されます)</label>
-        <div id="delete-friend-list"></div>
-    </div>
-
-    <button onclick="closeAllModals()" style="width:100%; margin-top:20px; background:#eee; border:none; padding:8px; border-radius:8px;">閉じる</button>
-</div>
-
-<script src="chat.js"></script>
-</body>
-</html>
+    setInterval(() => { if (currentFriendUUID) loadChatHistory(currentFriendUUID, false); }, 3000);
+    setInterval(syncFriends, 10000);
+});
+</script>
