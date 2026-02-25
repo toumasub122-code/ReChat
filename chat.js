@@ -12,7 +12,7 @@ const HEADERS = { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Conten
 let currentFriendUUID = null;
 let friends = JSON.parse(localStorage.getItem('chat_friends') || '[]');
 let lastMsgCount = 0;
-// 通知設定 (キー: friendUUID, 値: boolean)
+// 通知設定を読み込み (デフォルト空)
 let notificationSettings = JSON.parse(localStorage.getItem('chat_notif_settings') || '{}');
 
 // --- 4. 名前・フレンド管理 ---
@@ -44,13 +44,14 @@ async function loadChatHistory(friendUuid) {
         
         if (history.length !== lastMsgCount) {
             const container = document.getElementById('chat-container');
-            const isFirstLoad = lastMsgCount === 0;
             
-            // 通知判定
-            if (!isFirstLoad && history.length > lastMsgCount) {
+            // 通知チェック：件数が増えており、かつ最新メッセージが相手からの場合
+            if (lastMsgCount !== 0 && history.length > lastMsgCount) {
                 const lastMsg = history[history.length - 1];
                 if (lastMsg.from_uuid !== myUUID && notificationSettings[friendUuid]) {
-                    new Notification("新着メッセージ", { body: lastMsg.content });
+                    if (Notification.permission === "granted") {
+                        new Notification("新着メッセージ", { body: lastMsg.content });
+                    }
                 }
             }
 
@@ -74,28 +75,28 @@ async function syncFriends() {
         const data = await res.json();
         const dbUuids = data.map(rel => (rel.user_a === myUUID) ? rel.user_b : rel.user_a);
         
-        let changed = false;
-        // DBにあるフレンドの名前を最新に更新（相手が名前を変えた場合に備える）
-        const updatedFriends = [];
+        let updated = false;
+        const newFriendList = [];
+
         for (const uid of dbUuids) {
+            // 常に最新の名前をDBから取得（改善ポイント：相手の名前変更が見える）
             const latestName = await getFriendName(uid);
+            newFriendList.push({ uuid: uid, name: latestName });
+            
             const existing = friends.find(f => f.uuid === uid);
             if (!existing || existing.name !== latestName) {
-                changed = true;
+                updated = true;
             }
-            updatedFriends.push({ uuid: uid, name: latestName });
         }
 
-        // 削除されたフレンドのチェック
-        if (friends.length !== updatedFriends.length) changed = true;
-
-        if (changed) {
-            friends = updatedFriends;
+        if (updated || friends.length !== newFriendList.length) {
+            friends = newFriendList;
             localStorage.setItem('chat_friends', JSON.stringify(friends));
             renderFriendList();
+            // チャット中の相手の名前が更新された場合
             if (currentFriendUUID) {
-                const f = friends.find(f => f.uuid === currentFriendUUID);
-                if (f) document.getElementById('chat-with-name').innerText = `${f.name} とのチャット`;
+                const current = friends.find(f => f.uuid === currentFriendUUID);
+                if (current) document.getElementById('chat-with-name').innerText = `${current.name} とのチャット`;
             }
         }
     } catch (e) {}
@@ -114,7 +115,7 @@ function renderFriendList() {
             lastMsgCount = 0;
             document.getElementById('chat-with-name').innerText = `${f.name} とのチャット`;
             document.getElementById('chat-container').innerHTML = '';
-            updateNotifBtnUI();
+            updateNotifBtnUI(); // 通知ボタン表示更新
             renderFriendList();
             loadChatHistory(f.uuid);
         };
@@ -138,7 +139,6 @@ function updateNotifBtnUI() {
 window.toggleNotification = () => {
     if (!currentFriendUUID) return;
     
-    // ブラウザの通知許可リクエスト
     if (Notification.permission === "default") {
         Notification.requestPermission();
     }
@@ -168,7 +168,11 @@ window.deleteFriend = async (uuid) => {
     await fetch(`${SB_URL}/friend_relations?${query}`, { method: 'DELETE', headers: HEADERS });
     friends = friends.filter(f => f.uuid !== uuid);
     localStorage.setItem('chat_friends', JSON.stringify(friends));
-    if (currentFriendUUID === uuid) { currentFriendUUID = null; document.getElementById('notif-toggle-btn').style.display = 'none'; }
+    if (currentFriendUUID === uuid) { 
+        currentFriendUUID = null; 
+        document.getElementById('chat-with-name').innerText = '相手を選択してください';
+        document.getElementById('notif-toggle-btn').style.display = 'none'; 
+    }
     renderFriendList(); renderDeleteFriendList();
 };
 
@@ -227,5 +231,5 @@ window.addEventListener('DOMContentLoaded', () => {
 
     // 定期更新
     setInterval(() => { if (currentFriendUUID) loadChatHistory(currentFriendUUID); }, 3000);
-    setInterval(syncFriends, 8000); // 名前変更を反映するために定期同期
+    setInterval(syncFriends, 5000); // 5秒ごとにフレンド情報を同期
 });
