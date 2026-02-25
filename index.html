@@ -15,6 +15,7 @@
             --chat-bg: #ebebeb;
         }
 
+        /* 画面全体の高さ制御 */
         html, body { 
             height: 100%; height: 100dvh; 
             margin: 0; padding: 0; overflow: hidden; 
@@ -33,7 +34,7 @@
 
         /* UA判定によるスマホ・PCの切り分け */
         .is-mobile #sidebar { width: 65px; }
-        .is-mobile .friend-name { display: none !important; } /* スマホは名前を出さない */
+        .is-mobile .friend-name { display: none !important; }
         
         .notify-toggle-container { 
             display: flex; flex-direction: column; align-items: center; 
@@ -84,7 +85,7 @@
             border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; font-weight: bold;
         }
 
-        /* --- 入力フォーム --- */
+        /* --- 入力フォーム（Pixel等での見切れ対策済） --- */
         .input-area { 
             background: var(--input-bg); padding: 10px; display: flex; gap: 8px; 
             border-top: 1px solid #ddd; align-items: center; flex-shrink: 0;
@@ -94,9 +95,13 @@
         #img-btn { background: #95a5a6; color: white; border: none; width: 38px; height: 38px; border-radius: 50%; cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
         #send-btn { background: var(--header-bg); color: white; border: none; padding: 10px 15px; border-radius: 20px; cursor: pointer; font-weight: bold; flex-shrink: 0; }
 
-        /* モーダル等は省略せず維持 */
+        /* モーダル */
         .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 25px; border-radius: 15px; box-shadow: 0 5px 30px rgba(0,0,0,0.4); z-index: 1000; width: 85%; max-width: 320px; }
         .overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 999; }
+        .uuid-display { font-size: 10px; color: #888; background: #f0f0f0; padding: 8px; border-radius: 5px; word-break: break-all; cursor: pointer; margin-top: 5px; border: 1px solid #ddd; text-align: center; }
+        .delete-list { margin-top: 20px; max-height: 120px; overflow-y: auto; border-top: 1px solid #eee; padding-top: 10px; }
+        .delete-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; font-size: 13px; border-bottom: 1px solid #f9f9f9; }
+        .del-btn { background: #ff4757; color: white; border: none; border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 11px; }
     </style>
 </head>
 <body id="body-tag">
@@ -105,11 +110,11 @@
     <div class="friend-icon" onclick="showFriendModal()" style="background: #4e5d6c;">
         <span>＋</span><span class="friend-name">追加</span>
     </div>
-    <div id="notify-area" style="padding: 5px 0;">
+    <div id="notify-area" style="padding: 5px 0; display: none;">
         <div class="notify-toggle-container">
             <span>通知</span>
             <label class="switch">
-                <input type="checkbox" id="notify-toggle" onchange="toggleNotification()">
+                <input type="checkbox" id="notify-toggle">
                 <span class="slider"></span>
             </label>
         </div>
@@ -155,14 +160,18 @@
     <h3>プロファイル設定</h3>
     <label style="font-size: 12px; color: #666;">表示名</label>
     <input type="text" id="my-name-input" style="width:100%; padding:10px; margin-bottom:10px; border:1px solid #ddd; border-radius:8px; box-sizing:border-box;">
-    <label style="font-size: 12px; color: #666;">あなたのUUID</label>
+    <label style="font-size: 12px; color: #666;">あなたのUUID (タップでコピー)</label>
     <div id="my-uuid-display" class="uuid-display" onclick="copyUUID()"></div>
+    <div class="delete-list">
+        <label style="font-size: 12px; color: #666;">フレンド解除</label>
+        <div id="delete-friend-list"></div>
+    </div>
     <button onclick="saveMyName()" style="width:100%; padding:10px; background:var(--sidebar-bg); color:white; border:none; border-radius:8px; margin-top:15px;">保存</button>
-    <button onclick="closeAllModals()" style="width:100%; margin-top:20px; background:#eee; border:none; padding:8px; border-radius:8px;">閉じる</button>
+    <button onclick="closeAllModals()" style="width:100%; margin-top:10px; background:#eee; border:none; padding:8px; border-radius:8px;">閉じる</button>
 </div>
 
 <script>
-    // UA判定でスマホクラス付与
+    // UA判定
     const ua = navigator.userAgent.toLowerCase();
     const isMobile = /iphone|ipad|ipod|android/.test(ua);
     if (isMobile) {
@@ -171,11 +180,9 @@
 
     let selectedFileData = null;
 
-    // ファイル選択時のプレビュー処理
     function handleFileSelect(input) {
         const file = input.files[0];
         if (!file) return;
-
         const reader = new FileReader();
         reader.onload = function(e) {
             selectedFileData = e.target.result;
@@ -191,30 +198,22 @@
         document.getElementById('preview-area').style.display = 'none';
     }
 
-    // 送信ボタンクリック時の分岐処理
     function handleSendClick() {
-        const msg = document.getElementById('msg-input').value;
-        
+        const msgInput = document.getElementById('msg-input');
         if (selectedFileData) {
-            // 画像がある場合（chat.jsの送信関数を呼び出し）
-            // ※chat.js側に sendImageMessage(dataUrl) という関数がある前提、または既存の関数をラップ
             if (typeof sendImageMessage === 'function') {
                 sendImageMessage(selectedFileData);
                 clearPreview();
-            } else {
-                // chat.jsの読み込み待ちや関数名違いへの対応（chat.js側に合わせる）
-                alert("送信準備中...");
             }
-        } else if (msg.trim() !== "") {
-            // 文字のみの場合（既存の送信ボタンクリックイベントを模倣）
-            document.getElementById('send-btn').dispatchEvent(new Event('click_original'));
+        } else if (msgInput.value.trim() !== "") {
+            if (typeof sendMessage === 'function') {
+                sendMessage();
+            }
         }
     }
 
     function convertFullWidthNum(input) {
-        input.value = input.value.replace(/[０-９]/g, function(s) {
-            return String.fromCharCode(s.charCodeAt(0) - 0xFEE0);
-        }).replace(/[^0-9]/g, '');
+        input.value = input.value.replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0)).replace(/[^0-9]/g, '');
     }
 </script>
 <script src="chat.js"></script>

@@ -13,74 +13,61 @@ let currentFriendUUID = null;
 let friends = []; 
 let lastMsgCount = 0;
 let notificationSettings = JSON.parse(localStorage.getItem('chat_notify_settings') || '{}');
-
-// 画像送信制限用 (1時間に5枚)
 let imgHistory = JSON.parse(localStorage.getItem('chat_img_history') || '[]');
 
-// --- 4. 画像処理 (制限・圧縮) ---
+// --- 4. 画像処理 ---
 
 function checkImageQuota() {
     const now = Date.now();
-    // 1時間以上前の記録を削除
     imgHistory = imgHistory.filter(ts => now - ts < 3600000);
     localStorage.setItem('chat_img_history', JSON.stringify(imgHistory));
     return imgHistory.length < 5;
 }
 
-async function compressImage(file) {
-    return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = (e) => {
-            const img = new Image();
-            img.src = e.target.result;
-            img.onload = () => {
-                const canvas = document.createElement('canvas');
-                canvas.width = img.width;
-                canvas.height = img.height;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(img, 0, 0);
-
-                let quality = 0.9;
-                let dataUrl = canvas.toDataURL('image/jpeg', quality);
-                
-                // 10MB(10,485,760 bytes)を超える場合は品質を下げる
-                while (dataUrl.length * 0.75 > 10485760 && quality > 0.1) {
-                    quality -= 0.1;
-                    dataUrl = canvas.toDataURL('image/jpeg', quality);
-                }
-
-                // Blobに変換
-                const bin = atob(dataUrl.split(',')[1]);
-                const buffer = new Uint8Array(bin.length);
-                for (let i = 0; i < bin.length; i++) buffer[i] = bin.charCodeAt(i);
-                resolve(new Blob([buffer], { type: 'image/jpeg' }));
-            };
-        };
-    });
+// DataURLをBlobに変換（スマホ送信の安定化）
+function dataUrlToBlob(dataUrl) {
+    const parts = dataUrl.split(';base64,');
+    const bin = atob(parts[1]);
+    const buffer = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) buffer[i] = bin.charCodeAt(i);
+    return new Blob([buffer], { type: 'image/jpeg' });
 }
 
-async function uploadImage(file) {
-    const compressedBlob = await compressImage(file);
-    const fileName = `${Date.now()}_${crypto.randomUUID()}.jpg`;
-    // Storageのパス: bucket/chat-images/myUUID/filename
-    const storageUrl = SB_URL.replace('/rest/v1', '/storage/v1') + `/object/chat-images/${myUUID}/${fileName}`;
+// HTMLから呼ばれる画像送信関数
+async function sendImageMessage(dataUrl) {
+    if (!currentFriendUUID) return;
+    if (!checkImageQuota()) { alert("画像送信は1時間に5枚までです。"); return; }
 
-    const res = await fetch(storageUrl, {
-        method: 'POST',
-        headers: {
-            'apikey': SB_KEY,
-            'Authorization': `Bearer ${SB_KEY}`,
-            'Content-Type': 'image/jpeg'
-        },
-        body: compressedBlob
-    });
+    try {
+        const blob = dataUrlToBlob(dataUrl);
+        const fileName = `${Date.now()}_${crypto.randomUUID()}.jpg`;
+        const storageUrl = SB_URL.replace('/rest/v1', '/storage/v1') + `/object/chat-images/${myUUID}/${fileName}`;
 
-    if (!res.ok) throw new Error("Upload Failed");
-    return SB_URL.replace('/rest/v1', '/storage/v1') + `/object/public/chat-images/${myUUID}/${fileName}`;
+        const res = await fetch(storageUrl, {
+            method: 'POST',
+            headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'image/jpeg' },
+            body: blob
+        });
+
+        if (!res.ok) throw new Error("Upload Failed");
+
+        const publicUrl = SB_URL.replace('/rest/v1', '/storage/v1') + `/object/public/chat-images/${myUUID}/${fileName}`;
+        await fetch(`${SB_URL}/chat_messages`, { 
+            method: 'POST', 
+            headers: HEADERS, 
+            body: JSON.stringify({ from_uuid: myUUID, to_uuid: currentFriendUUID, content: publicUrl }) 
+        });
+
+        imgHistory.push(Date.now());
+        localStorage.setItem('chat_img_history', JSON.stringify(imgHistory));
+        loadChatHistory(currentFriendUUID, true);
+    } catch (err) {
+        alert("送信失敗");
+        console.error(err);
+    }
 }
 
-// --- 5. 同期・チャットロジック ---
+// --- 5. チャットロジック ---
 
 async function syncFriends() {
     try {
@@ -122,8 +109,6 @@ async function loadChatHistory(friendUuid, silent = true) {
             history.forEach(msg => {
                 const div = document.createElement('div');
                 div.className = `msg ${msg.from_uuid === myUUID ? 'me' : 'other'}`;
-                
-                // 画像URLかどうかの判定
                 if (msg.content.includes('/storage/v1/object/public/chat-images/')) {
                     const img = document.createElement('img');
                     img.src = msg.content;
@@ -225,49 +210,19 @@ window.showSettingsModal = () => {
 window.closeAllModals = () => { document.querySelectorAll('.modal, .overlay').forEach(el => el.style.display = 'none'); };
 window.copyUUID = () => { navigator.clipboard.writeText(myUUID); alert("UUIDをコピーしました"); };
 
+// 文字送信関数（HTMLから呼ばれる）
+async function sendMessage() {
+    const input = document.getElementById('msg-input');
+    const content = input.value.trim();
+    if (!content || !currentFriendUUID) return;
+    input.value = '';
+    await fetch(`${SB_URL}/chat_messages`, { method: 'POST', headers: HEADERS, body: JSON.stringify({ from_uuid: myUUID, to_uuid: currentFriendUUID, content: content }) });
+    loadChatHistory(currentFriendUUID, true);
+}
+
+// 初期化
 window.addEventListener('DOMContentLoaded', async () => {
     await syncFriends();
-    
-    // 文字送信
-    document.getElementById('send-btn').onclick = async () => {
-        const input = document.getElementById('msg-input');
-        const content = input.value.trim();
-        if (!content || !currentFriendUUID) return;
-        input.value = '';
-        await fetch(`${SB_URL}/chat_messages`, { method: 'POST', headers: HEADERS, body: JSON.stringify({ from_uuid: myUUID, to_uuid: currentFriendUUID, content: content }) });
-        loadChatHistory(currentFriendUUID, true);
-    };
-
-    // 画像選択トリガー
-    document.getElementById('img-btn').onclick = () => document.getElementById('image-input').click();
-
-    // 画像送信処理
-    document.getElementById('image-input').onchange = async (e) => {
-        const file = e.target.files[0];
-        if (!file || !currentFriendUUID) return;
-
-        if (!checkImageQuota()) {
-            alert("画像送信は1時間に5枚までです。");
-            return;
-        }
-
-        try {
-            const url = await uploadImage(file);
-            await fetch(`${SB_URL}/chat_messages`, { 
-                method: 'POST', 
-                headers: HEADERS, 
-                body: JSON.stringify({ from_uuid: myUUID, to_uuid: currentFriendUUID, content: url }) 
-            });
-            imgHistory.push(Date.now());
-            localStorage.setItem('chat_img_history', JSON.stringify(imgHistory));
-            loadChatHistory(currentFriendUUID, true);
-        } catch (err) {
-            alert("画像送信に失敗しました。");
-            console.error(err);
-        }
-        e.target.value = ''; // 連続選択を可能にする
-    };
-
     setInterval(() => { if (currentFriendUUID) loadChatHistory(currentFriendUUID, false); }, 3000);
     setInterval(syncFriends, 10000);
 });
