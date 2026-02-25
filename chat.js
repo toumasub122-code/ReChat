@@ -18,7 +18,7 @@ let pc = null;
 let localStream = null;
 const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
-// --- 4. 名前管理 ---
+// --- 4. 名前管理機能 ---
 async function pushNameToDB(name) {
     try {
         await fetch(`${SB_URL}/users`, {
@@ -26,7 +26,7 @@ async function pushNameToDB(name) {
             headers: { ...HEADERS, 'Prefer': 'resolution=merge-duplicates' },
             body: JSON.stringify({ uuid: myUUID, display_name: name }),
         });
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error("Name push failed", e); }
 }
 
 async function getFriendName(uuid) {
@@ -58,21 +58,21 @@ async function loadChatHistory(friendUuid) {
             lastMsgCount = history.length;
             container.scrollTop = container.scrollHeight;
         }
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error("Load chat failed", e); }
 }
 
-// --- 6. 同期機能 ---
+// --- 6. フレンド同期 ---
 async function syncFriends() {
     try {
         const url = `${SB_URL}/friend_relations?or=(user_a.eq.${myUUID},user_b.eq.${myUUID})`;
         const res = await fetch(url, { headers: HEADERS });
         const data = await res.json();
-        const dbFriendUuids = data.map(rel => (rel.user_a === myUUID) ? rel.user_b : rel.user_a).filter(u => u !== myUUID); 
+        const dbFriendUuids = data.map(rel => (rel.user_a === myUUID) ? rel.user_b : rel.user_a).filter(uuid => uuid !== myUUID); 
         
         let updated = false;
-        const oldLen = friends.length;
+        const oldLength = friends.length;
         friends = friends.filter(f => dbFriendUuids.includes(f.uuid));
-        if (friends.length !== oldLen) updated = true;
+        if (friends.length !== oldLength) updated = true;
 
         for (const targetUuid of dbFriendUuids) {
             let existingIdx = friends.findIndex(f => f.uuid === targetUuid);
@@ -90,7 +90,7 @@ async function syncFriends() {
             renderFriendList();
             if (document.getElementById('settings-modal').style.display === 'block') renderDeleteFriendList();
         }
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error("Sync failed", e); }
 }
 
 // --- 7. 通話ロジック ---
@@ -101,10 +101,10 @@ async function setupWebRTC(isCaller, targetUuid) {
     try {
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-    } catch (e) { alert("マイクが許可されていません"); return endCall(); }
+    } catch (e) { alert("マイクへのアクセスを許可してください"); return endCall(); }
 
-    pc.ontrack = (e) => { document.getElementById('remote-audio').srcObject = e.streams[0]; };
-    pc.onicecandidate = (e) => { if (e.candidate) sendCallSignal(targetUuid, 'candidate', e.candidate); };
+    pc.ontrack = (event) => { document.getElementById('remote-audio').srcObject = event.streams[0]; };
+    pc.onicecandidate = (event) => { if (event.candidate) sendCallSignal(targetUuid, 'candidate', event.candidate); };
 
     if (isCaller) {
         const offer = await pc.createOffer();
@@ -127,7 +127,7 @@ async function watchCalls() {
         const data = await res.json();
         if (data.length === 0) return;
         const signal = data[0];
-        if (new Date() - new Date(signal.created_at) > 10000) return; // 10秒以上前は無視
+        if (new Date() - new Date(signal.created_at) > 10000) return;
 
         if (signal.type === 'offer' && !pc) {
             window.incomingOffer = signal;
@@ -168,7 +168,7 @@ function endCall(sendSignal = true) {
     if (pc) { pc.close(); pc = null; }
     if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
     document.getElementById('call-modal').style.display = 'none';
-    closeAllModals();
+    document.getElementById('overlay').style.display = 'none';
 }
 
 // --- 8. UI描画 ---
@@ -198,18 +198,20 @@ function renderDeleteFriendList() {
     container.innerHTML = friends.length ? '' : '<p>フレンドはいません</p>';
     friends.forEach(f => {
         const item = document.createElement('div');
-        item.className = 'delete-item';
-        item.innerHTML = `<span>${f.name}</span><button onclick="deleteFriend('${f.uuid}')" style="background:#e74c3c;color:white;border:none;padding:4px 8px;border-radius:4px;">削除</button>`;
+        item.style = "display:flex; justify-content:space-between; align-items:center; padding:10px; border-bottom:1px solid #eee;";
+        item.innerHTML = `<span>${f.name}</span><button onclick="window.deleteFriend('${f.uuid}')" style="background:#e74c3c;color:white;border:none;border-radius:4px;padding:4px 10px;cursor:pointer;">削除</button>`;
         container.appendChild(item);
     });
 }
 
-// --- 9. 初期化 ---
+// --- 9. 初期化・アクション ---
 window.deleteFriend = async (uuid) => {
     if (!confirm("削除しますか？")) return;
-    const q = `or=(and(user_a.eq.${myUUID},user_b.eq.${uuid}),and(user_a.eq.${uuid},user_b.eq.${myUUID}))`;
-    await fetch(`${SB_URL}/friend_relations?${q}`, { method: 'DELETE', headers: HEADERS });
+    const query = `or=(and(user_a.eq.${myUUID},user_b.eq.${uuid}),and(user_a.eq.${uuid},user_b.eq.${myUUID}))`;
+    await fetch(`${SB_URL}/friend_relations?${query}`, { method: 'DELETE', headers: HEADERS });
     friends = friends.filter(f => f.uuid !== uuid);
+    localStorage.setItem('chat_friends', JSON.stringify(friends));
+    if (currentFriendUUID === uuid) { currentFriendUUID = null; document.getElementById('call-start-btn').style.display = 'none'; }
     renderFriendList(); renderDeleteFriendList();
 };
 
@@ -247,15 +249,25 @@ window.closeAllModals = () => { document.querySelectorAll('.modal, .overlay').fo
 
 window.addEventListener('DOMContentLoaded', async () => {
     await pushNameToDB(myDisplayName);
+    
     document.getElementById('send-btn').onclick = async () => {
-        const content = document.getElementById('msg-input').value.trim();
+        const input = document.getElementById('msg-input');
+        const content = input.value.trim();
         if (!content || !currentFriendUUID) return;
         await fetch(`${SB_URL}/chat_messages`, { method: 'POST', headers: HEADERS, body: JSON.stringify({ from_uuid: myUUID, to_uuid: currentFriendUUID, content: content, is_image: false }) });
-        document.getElementById('msg-input').value = ''; loadChatHistory(currentFriendUUID);
+        input.value = ''; loadChatHistory(currentFriendUUID);
     };
+
+    document.getElementById('msg-input').onkeypress = (e) => { if (e.key === 'Enter') document.getElementById('send-btn').click(); };
     document.getElementById('call-start-btn').onclick = () => { showCallUI(currentFriendUUID, false); setupWebRTC(true, currentFriendUUID); };
     document.getElementById('call-hangup-btn').onclick = () => endCall(true);
+
     renderFriendList();
     syncFriends();
-    setInterval(() => { if (currentFriendUUID) loadChatHistory(currentFriendUUID); syncFriends(); watchCalls(); }, 4000);
+    
+    setInterval(() => {
+        if (currentFriendUUID) loadChatHistory(currentFriendUUID);
+        syncFriends();
+        watchCalls();
+    }, 4000);
 });
