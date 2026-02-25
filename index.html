@@ -32,7 +32,6 @@
             height: 100%;
         }
 
-        /* UA判定によるスマホ・PCの切り分け */
         .is-mobile #sidebar { width: 65px; }
         .is-mobile .friend-name { display: none !important; }
         
@@ -41,7 +40,6 @@
             gap: 4px; color: white; font-size: 10px; margin-bottom: 5px; 
         }
 
-        /* PC（ホバー対応） */
         body:not(.is-mobile) #sidebar:hover { width: 200px; }
         body:not(.is-mobile) #sidebar:hover .friend-name { display: inline; }
         body:not(.is-mobile) #sidebar:hover .friend-icon { width: 180px; justify-content: flex-start; padding-left: 10px; }
@@ -69,7 +67,7 @@
         #chat-container { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; -webkit-overflow-scrolling: touch; }
 
         /* --- メッセージ・画像 --- */
-        .msg { max-width: 75%; padding: 10px 14px; border-radius: 18px; font-size: 15px; word-wrap: break-word; }
+        .msg { max-width: 75%; padding: 10px 14px; border-radius: 18px; font-size: 15px; word-wrap: break-word; position: relative; }
         .msg.me { align-self: flex-end; background: var(--my-bubble); border-top-right-radius: 2px; }
         .msg.other { align-self: flex-start; background: white; border-top-left-radius: 2px; }
         .msg img { max-width: 100%; border-radius: 10px; cursor: pointer; display: block; margin: 5px 0; }
@@ -85,7 +83,7 @@
             border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; font-weight: bold;
         }
 
-        /* --- 入力フォーム（Pixel等での見切れ対策済） --- */
+        /* --- 入力フォーム --- */
         .input-area { 
             background: var(--input-bg); padding: 10px; display: flex; gap: 8px; 
             border-top: 1px solid #ddd; align-items: center; flex-shrink: 0;
@@ -114,7 +112,7 @@
         <div class="notify-toggle-container">
             <span>通知</span>
             <label class="switch">
-                <input type="checkbox" id="notify-toggle">
+                <input type="checkbox" id="notify-toggle" onchange="if(typeof toggleNotification === 'function') toggleNotification()">
                 <span class="slider"></span>
             </label>
         </div>
@@ -171,7 +169,6 @@
 </div>
 
 <script>
-    // UA判定
     const ua = navigator.userAgent.toLowerCase();
     const isMobile = /iphone|ipad|ipod|android/.test(ua);
     if (isMobile) {
