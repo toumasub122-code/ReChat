@@ -73,34 +73,38 @@ async function checkMyStatus() {
 
 async function syncFriends() {
     try {
-        // DBから最新の関係性を取得
+        // 1. DBから自分に関連するフレンド関係をすべて取得（常にDBを正とする）
         const url = `${SB_URL}/friend_relations?or=(user_a.eq.${myUUID},user_b.eq.${myUUID})`;
         const res = await fetch(url, { headers: HEADERS });
-        const data = await res.json();
-        const dbUuids = data.map(rel => (rel.user_a === myUUID) ? rel.user_b : rel.user_a);
+        const dbRelations = await res.json();
         
-        let updated = false;
-        // 追加チェック
-        for (const uid of dbUuids) {
+        // 2. DB上に存在する有効なフレンドのUUIDリスト
+        const validUuids = dbRelations.map(rel => (rel.user_a === myUUID) ? rel.user_b : rel.user_a);
+        
+        let isChanged = false;
+
+        // A. DBにいないのにlocalStorageにいる奴を削除（相手が消したことを検知して自分も消す）
+        const originalLen = friends.length;
+        friends = friends.filter(f => validUuids.includes(f.uuid));
+        if (friends.length !== originalLen) isChanged = true;
+
+        // B. DBにいるのにlocalStorageにいない奴を追加
+        for (const uid of validUuids) {
             if (!friends.find(f => f.uuid === uid)) {
                 const resN = await fetch(`${SB_URL}/users?uuid=eq.${uid}&select=display_name`, { headers: HEADERS });
                 const dataN = await resN.json();
                 const name = dataN[0]?.display_name || `User-${uid.substring(0,4)}`;
                 friends.push({ uuid: uid, name: name });
-                updated = true;
+                isChanged = true;
             }
         }
-        // 削除チェック（DBにいないUUIDをローカルからも消す）
-        const oldLen = friends.length;
-        friends = friends.filter(f => dbUuids.includes(f.uuid));
-        if (friends.length !== oldLen) updated = true;
 
-        if (updated) {
+        if (isChanged) {
             localStorage.setItem('chat_friends', JSON.stringify(friends));
             renderFriendList();
             if (document.getElementById('settings-modal').style.display === 'block') renderDeleteList();
         }
-    } catch (e) {}
+    } catch (e) { console.error("Sync Error:", e); }
 }
 
 function renderFriendList() {
@@ -138,22 +142,19 @@ window.saveMyName = async () => {
     }
 };
 
-// 【重要修正】相手側のDBからも抹消する完全削除ロジック
 window.removeFriend = async (targetUuid) => {
     if (!confirm("フレンドを解除しますか？（相手からも消えます）")) return;
     try {
-        // 条件を1つのクエリパラメータとして正しく渡す
         const condition = `or(and(user_a.eq.${myUUID},user_b.eq.${targetUuid}),and(user_a.eq.${targetUuid},user_b.eq.${myUUID}))`;
         const url = `${SB_URL}/friend_relations?${condition}`;
         
-        const res = await fetch(url, {
-            method: 'DELETE',
-            headers: HEADERS
-        });
+        const res = await fetch(url, { method: 'DELETE', headers: HEADERS });
 
         if (res.ok) {
+            // 自分のローカルを更新
             friends = friends.filter(f => f.uuid !== targetUuid);
             localStorage.setItem('chat_friends', JSON.stringify(friends));
+            
             if (currentFriendUUID === targetUuid) {
                 currentFriendUUID = null;
                 document.getElementById('chat-container').innerHTML = '';
@@ -187,11 +188,10 @@ window.addFriend = async () => {
     const data = await res.json();
     if (data.length > 0 && data[0].uuid !== myUUID) {
         const targetUuid = data[0].uuid;
-        if (myIsAdmin) {
-            await fetch(`${SB_URL}/users?uuid=eq.${targetUuid}`, { method: 'PATCH', headers: HEADERS, body: JSON.stringify({ is_admin: true }) });
-        }
+        // 片方から追加されたらDBに関係を登録
         await fetch(`${SB_URL}/friend_relations`, { method: 'POST', headers: HEADERS, body: JSON.stringify({ user_a: myUUID, user_b: targetUuid }) });
-        syncFriends(); closeAllModals();
+        syncFriends(); 
+        closeAllModals();
     }
 };
 
@@ -229,6 +229,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     };
 
     setInterval(() => { if (currentFriendUUID) loadChatHistory(currentFriendUUID, false); }, 3000);
-    setInterval(syncFriends, 5000); // 同期を少し早めました
+    setInterval(syncFriends, 5000); 
     setInterval(checkMyStatus, 30000);
-});
+});s
