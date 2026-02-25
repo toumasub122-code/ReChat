@@ -32,7 +32,7 @@ window.toggleNotification = () => {
     }
 };
 
-// --- 5. メッセージ・フレンド機能 ---
+// --- 5. メッセージ・フレンド・認証機能 ---
 async function loadChatHistory(friendUuid, silent = true) {
     if (!friendUuid) return;
     try {
@@ -79,7 +79,7 @@ async function syncFriends() {
         const dbUuids = data.map(rel => (rel.user_a === myUUID) ? rel.user_b : rel.user_a);
         
         let updated = false;
-        // 新規追加のチェック
+        // 追加されたフレンドをチェック
         for (const uid of dbUuids) {
             if (!friends.find(f => f.uuid === uid)) {
                 const resN = await fetch(`${SB_URL}/users?uuid=eq.${uid}&select=display_name`, { headers: HEADERS });
@@ -89,7 +89,7 @@ async function syncFriends() {
                 updated = true;
             }
         }
-        // 削除されたフレンドのチェック
+        // 相手側が削除した場合、自分のリストからも即消去
         const originalCount = friends.length;
         friends = friends.filter(f => dbUuids.includes(f.uuid));
         if (friends.length !== originalCount) updated = true;
@@ -121,10 +121,10 @@ function renderFriendList() {
     });
 }
 
-// --- 6. ユーザー管理アクション ---
+// --- 6. ユーザー管理・削除アクション ---
 window.copyUUID = () => {
     navigator.clipboard.writeText(myUUID);
-    console.log("UUID copied to clipboard");
+    console.log("UUID copied");
 };
 
 window.saveMyName = async () => {
@@ -136,14 +136,16 @@ window.saveMyName = async () => {
     }
 };
 
+// 相手のDBからも消去する双方向削除
 window.removeFriend = async (targetUuid) => {
-    if (!confirm("フレンドを解除しますか？（相手側からも削除されます）")) return;
+    if (!confirm("フレンドを解除しますか？（相手からも消えます）")) return;
     try {
         const filter = `or(and(user_a.eq.${myUUID},user_b.eq.${targetUuid}),and(user_a.eq.${targetUuid},user_b.eq.${myUUID}))`;
         await fetch(`${SB_URL}/friend_relations?${filter}`, { method: 'DELETE', headers: HEADERS });
-        
+
         friends = friends.filter(f => f.uuid !== targetUuid);
         localStorage.setItem('chat_friends', JSON.stringify(friends));
+
         if (currentFriendUUID === targetUuid) {
             currentFriendUUID = null;
             document.getElementById('chat-container').innerHTML = '';
@@ -151,12 +153,15 @@ window.removeFriend = async (targetUuid) => {
         }
         renderFriendList();
         renderDeleteList();
-    } catch (e) {}
+    } catch (e) { console.error(e); }
 };
 
 function renderDeleteList() {
     const container = document.getElementById('delete-friend-list');
     container.innerHTML = '';
+    if (friends.length === 0) {
+        container.innerHTML = '<div style="font-size:11px; color:#999; margin-top:5px;">登録なし</div>';
+    }
     friends.forEach(f => {
         const div = document.createElement('div');
         div.className = 'delete-item';

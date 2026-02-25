@@ -58,8 +58,8 @@
         .uuid-display:active { background: #e0e0e0; }
 
         .delete-list { margin-top: 20px; max-height: 120px; overflow-y: auto; border-top: 1px solid #eee; padding-top: 10px; }
-        .delete-item { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; font-size: 13px; }
-        .del-btn { background: #ff4757; color: white; border: none; border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 11px; }
+        .delete-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; font-size: 13px; border-bottom: 1px solid #f9f9f9; }
+        .del-btn { background: #ff4757; color: white; border: none; border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 11px; }
     </style>
 </head>
 <body>
@@ -105,8 +105,8 @@
 <div id="friend-modal" class="modal">
     <h3>フレンド追加</h3>
     <p>あなたのコード: <strong id="my-temp-code" style="font-size: 24px; color: #e67e22;">----</strong></p>
-    <input type="text" id="friend-code-input" placeholder="相手の4桁コードを入力" maxlength="4">
-    <button onclick="addFriend()" style="width:100%; padding:12px; background:var(--my-bubble); border:none; border-radius:8px; font-weight:bold; margin-top:10px;">登録</button>
+    <input type="text" id="friend-code-input" placeholder="相手の4桁コードを入力" maxlength="4" style="width:100%; padding:10px; box-sizing:border-box; margin-bottom:10px; border-radius:8px; border:1px solid #ccc;">
+    <button onclick="addFriend()" style="width:100%; padding:12px; background:var(--my-bubble); border:none; border-radius:8px; font-weight:bold;">登録</button>
 </div>
 
 <div id="settings-modal" class="modal">
@@ -120,7 +120,7 @@
     <button onclick="saveMyName()" style="width:100%; padding:10px; background:var(--sidebar-bg); color:white; border:none; border-radius:8px; margin-top:15px;">保存</button>
 
     <div class="delete-list">
-        <label style="font-size: 12px; color: #666;">フレンド管理 (解除すると双方から消去)</label>
+        <label style="font-size: 12px; color: #666;">フレンド解除 (双方のリストから消去されます)</label>
         <div id="delete-friend-list"></div>
     </div>
 
