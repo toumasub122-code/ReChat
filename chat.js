@@ -12,21 +12,18 @@ const HEADERS = { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Conten
 let currentFriendUUID = null;
 let friends = []; 
 let lastMsgCount = 0;
-// 各フレンドごとの通知設定を保持
 let notificationSettings = JSON.parse(localStorage.getItem('chat_notify_settings') || '{}');
 let imgHistory = JSON.parse(localStorage.getItem('chat_img_history') || '[]');
 
 // --- 4. 通知ロジック ---
 
-// 通知トグルの切り替え
 window.toggleNotification = async () => {
     const isChecked = document.getElementById('notify-toggle').checked;
     
     if (isChecked) {
-        // ブラウザの通知許可を求める
         const permission = await Notification.requestPermission();
         if (permission !== 'granted') {
-            alert("ブラウザの通知設定がブロックされています。");
+            alert("ブラウザの通知設定を許可してください。");
             document.getElementById('notify-toggle').checked = false;
             return;
         }
@@ -38,14 +35,17 @@ window.toggleNotification = async () => {
     }
 };
 
-// 通知を表示する関数
 function showNotification(senderName, content) {
-    // 相手との通知設定がオフ、またはブラウザが非表示（バックグラウンド等）でない場合はスルー
-    // (タブを見ているときは通知を出さない仕様にする場合)
     if (Notification.permission === 'granted') {
-        new Notification(`新着メッセージ: ${senderName}`, {
-            body: content.includes('/storage/v1/object/public/') ? '[画像が届きました]' : content,
-            icon: 'https://cdn-icons-png.flaticon.com/512/733/733585.png' // 任意のアイコンURL
+        // サービスワーカー経由で通知を表示（バックグラウンド対応）
+        navigator.serviceWorker.ready.then(registration => {
+            registration.showNotification(`新着メッセージ: ${senderName}`, {
+                body: content.includes('/storage/v1/object/public/') ? '[画像が届きました]' : content,
+                icon: 'https://cdn-icons-png.flaticon.com/512/733/733585.png',
+                badge: 'https://cdn-icons-png.flaticon.com/512/733/733585.png',
+                tag: 'chat-notification',
+                renotify: true
+            });
         });
     }
 }
@@ -119,11 +119,9 @@ async function loadChatHistory(friendUuid, silent = true) {
         const res = await fetch(url, { headers: HEADERS });
         const history = await res.json();
 
-        // 新着メッセージがあるか判定
         if (history.length > lastMsgCount) {
             const container = document.getElementById('chat-container');
             
-            // 通知を送る判定 (最初のロード時は送らない、自分が送った時は送らない)
             if (!silent && lastMsgCount > 0) {
                 const latestMsg = history[history.length - 1];
                 if (latestMsg.from_uuid !== myUUID && notificationSettings[friendUuid]) {
@@ -166,7 +164,6 @@ function renderFriendList() {
             lastMsgCount = 0;
             document.getElementById('chat-with-name').innerText = `${f.name} とのチャット`;
             document.getElementById('notify-area').style.display = 'block';
-            // 通知トグルの状態を反映
             document.getElementById('notify-toggle').checked = !!notificationSettings[f.uuid];
             renderFriendList();
             loadChatHistory(f.uuid, true);
@@ -250,7 +247,6 @@ async function sendMessage() {
 // 初期化
 window.addEventListener('DOMContentLoaded', async () => {
     await syncFriends();
-    // 3秒に一度、新着メッセージを確認（通知判定をfalseにして実行）
     setInterval(() => { if (currentFriendUUID) loadChatHistory(currentFriendUUID, false); }, 3000);
     setInterval(syncFriends, 10000);
 });

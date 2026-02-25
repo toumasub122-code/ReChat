@@ -15,7 +15,6 @@
             --chat-bg: #ebebeb;
         }
 
-        /* 画面全体の高さ制御 */
         html, body { 
             height: 100%; height: 100dvh; 
             margin: 0; padding: 0; overflow: hidden; 
@@ -24,12 +23,11 @@
 
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; }
 
-        /* --- サイドバー --- */
         #sidebar { 
             width: 70px; background: var(--sidebar-bg); display: flex; 
             flex-direction: column; align-items: center; padding: 10px 0; 
             gap: 15px; flex-shrink: 0; border-right: 1px solid rgba(0,0,0,0.1); 
-            height: 100%;
+            height: 100%; transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         .is-mobile #sidebar { width: 65px; }
@@ -61,18 +59,15 @@
         .friend-icon.active { border-color: var(--my-bubble) !important; background: #5d6d6e !important; }
         .friend-name { margin-left: 10px; font-size: 14px; white-space: nowrap; color: white; display: none; }
 
-        /* --- メインエリア --- */
         #main-area { flex: 1; display: flex; flex-direction: column; background: var(--chat-bg); height: 100%; min-width: 0; }
         header { background: var(--header-bg); color: white; padding: 15px; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; z-index: 10; }
         #chat-container { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; -webkit-overflow-scrolling: touch; }
 
-        /* --- メッセージ・画像 --- */
         .msg { max-width: 75%; padding: 10px 14px; border-radius: 18px; font-size: 15px; word-wrap: break-word; position: relative; }
         .msg.me { align-self: flex-end; background: var(--my-bubble); border-top-right-radius: 2px; }
         .msg.other { align-self: flex-start; background: white; border-top-left-radius: 2px; }
         .msg img { max-width: 100%; border-radius: 10px; cursor: pointer; display: block; margin: 5px 0; }
 
-        /* --- 画像プレビューエリア --- */
         #preview-area { 
             display: none; background: rgba(0,0,0,0.05); padding: 10px; 
             border-top: 1px solid #ddd; text-align: center; position: relative;
@@ -83,7 +78,6 @@
             border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; font-weight: bold;
         }
 
-        /* --- 入力フォーム --- */
         .input-area { 
             background: var(--input-bg); padding: 10px; display: flex; gap: 8px; 
             border-top: 1px solid #ddd; align-items: center; flex-shrink: 0;
@@ -93,7 +87,6 @@
         #img-btn { background: #95a5a6; color: white; border: none; width: 38px; height: 38px; border-radius: 50%; cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
         #send-btn { background: var(--header-bg); color: white; border: none; padding: 10px 15px; border-radius: 20px; cursor: pointer; font-weight: bold; flex-shrink: 0; }
 
-        /* モーダル */
         .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 25px; border-radius: 15px; box-shadow: 0 5px 30px rgba(0,0,0,0.4); z-index: 1000; width: 85%; max-width: 320px; }
         .overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 999; }
         .uuid-display { font-size: 10px; color: #888; background: #f0f0f0; padding: 8px; border-radius: 5px; word-break: break-all; cursor: pointer; margin-top: 5px; border: 1px solid #ddd; text-align: center; }
@@ -112,7 +105,7 @@
         <div class="notify-toggle-container">
             <span>通知</span>
             <label class="switch">
-                <input type="checkbox" id="notify-toggle" onchange="if(typeof toggleNotification === 'function') toggleNotification()">
+                <input type="checkbox" id="notify-toggle" onchange="toggleNotification()">
                 <span class="slider"></span>
             </label>
         </div>
@@ -169,6 +162,13 @@
 </div>
 
 <script>
+    // Service Worker登録
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('sw.js')
+        .then(reg => console.log('Service Worker Registered'))
+        .catch(err => console.error('Service Worker Registration Failed', err));
+    }
+
     const ua = navigator.userAgent.toLowerCase();
     const isMobile = /iphone|ipad|ipod|android/.test(ua);
     if (isMobile) {
