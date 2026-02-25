@@ -10,50 +10,99 @@ const HEADERS = { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Conten
 
 // --- 3. 状態管理 ---
 let currentFriendUUID = null;
-let friends = JSON.parse(localStorage.getItem('chat_friends') || '[]');
+let friendUuids = JSON.parse(localStorage.getItem('chat_friend_uuids') || '[]');
+let friends = []; 
 let lastMsgCount = 0;
-let notificationSettings = JSON.parse(localStorage.getItem('chat_notif_settings') || '{}');
+let notificationSettings = JSON.parse(localStorage.getItem('chat_notify_settings') || '{}');
 
-// --- 4. 名前・フレンド管理 ---
-async function pushNameToDB(name) {
-    try {
-        await fetch(`${SB_URL}/users`, {
-            method: 'POST',
-            headers: { ...HEADERS, 'Prefer': 'resolution=merge-duplicates' },
-            body: JSON.stringify({ uuid: myUUID, display_name: name }),
-        });
-    } catch (e) {}
+// --- 4. 通知機能 ---
+function sendBrowserNotification(title, body) {
+    if (Notification.permission === "granted") {
+        new Notification(title, { body: body });
+    }
 }
 
-async function getFriendName(uuid) {
+window.toggleNotification = () => {
+    if (!currentFriendUUID) return;
+    const isEnabled = document.getElementById('notify-toggle').checked;
+    notificationSettings[currentFriendUUID] = isEnabled;
+    localStorage.setItem('chat_notify_settings', JSON.stringify(notificationSettings));
+    if (isEnabled && Notification.permission === "default") {
+        Notification.requestPermission();
+    }
+};
+
+// --- 5. 同期・削除ロジック ---
+async function syncFriends() {
     try {
-        const res = await fetch(`${SB_URL}/users?uuid=eq.${uuid}&select=display_name`, { headers: HEADERS });
-        const data = await res.json();
-        return (data.length > 0 && data[0].display_name) ? data[0].display_name : `User-${uuid.substring(0,4)}`;
-    } catch (e) { return `User-${uuid.substring(0,4)}`; }
+        const url = `${SB_URL}/friend_relations?or=(user_a.eq.${myUUID},user_b.eq.${myUUID})`;
+        const res = await fetch(url, { headers: HEADERS });
+        const dbRelations = await res.json();
+        const dbUuids = dbRelations.map(rel => (rel.user_a === myUUID) ? rel.user_b : rel.user_a);
+        
+        friendUuids = dbUuids;
+        localStorage.setItem('chat_friend_uuids', JSON.stringify(friendUuids));
+
+        const updatedFriends = [];
+        for (const uid of friendUuids) {
+            const resN = await fetch(`${SB_URL}/users?uuid=eq.${uid}&select=display_name`, { headers: HEADERS });
+            const dataN = await resN.json();
+            const name = dataN[0]?.display_name || `User-${uid.substring(0,4)}`;
+            updatedFriends.push({ uuid: uid, name: name });
+        }
+        friends = updatedFriends;
+
+        if (currentFriendUUID && !dbUuids.includes(currentFriendUUID)) {
+            currentFriendUUID = null;
+            document.getElementById('chat-container').innerHTML = '';
+            document.getElementById('chat-with-name').innerText = '相手が削除されました';
+            document.getElementById('notify-area').style.display = 'none';
+        }
+
+        renderFriendList();
+        if (document.getElementById('settings-modal').style.display === 'block') renderDeleteList();
+    } catch (e) { console.error("Sync Error:", e); }
 }
 
-async function loadChatHistory(friendUuid) {
+window.removeFriend = async (targetUuid) => {
+    if (!confirm("本当に削除しますか？")) return;
+    try {
+        const cond = `or=(and(user_a.eq.${myUUID},user_b.eq.${targetUuid}),and(user_a.eq.${targetUuid},user_b.eq.${myUUID}))`;
+        const res = await fetch(`${SB_URL}/friend_relations?${cond}`, { method: 'DELETE', headers: HEADERS });
+        if (res.ok) {
+            friends = friends.filter(f => f.uuid !== targetUuid);
+            friendUuids = friendUuids.filter(u => u !== targetUuid);
+            localStorage.setItem('chat_friend_uuids', JSON.stringify(friendUuids));
+            if (currentFriendUUID === targetUuid) {
+                currentFriendUUID = null;
+                document.getElementById('chat-container').innerHTML = '';
+                document.getElementById('chat-with-name').innerText = '相手を選択してください';
+                document.getElementById('notify-area').style.display = 'none';
+            }
+            renderFriendList();
+            renderDeleteList();
+        }
+    } catch (e) { console.error("Remove Error:", e); }
+};
+
+// --- 6. メッセージ機能 ---
+async function loadChatHistory(friendUuid, silent = true) {
     if (!friendUuid) return;
     try {
-        const filter = `and(from_uuid.eq.${myUUID},to_uuid.eq.${friendUuid}),and(from_uuid.eq.${friendUuid},to_uuid.eq.${myUUID})`;
-        const url = `${SB_URL}/chat_messages?select=*&or=(${filter})&order=created_at.asc`;
+        const cond = `or=(and(from_uuid.eq.${myUUID},to_uuid.eq.${friendUuid}),and(from_uuid.eq.${friendUuid},to_uuid.eq.${myUUID}))`;
+        const url = `${SB_URL}/chat_messages?select=*&${cond}&order=created_at.asc`;
         const res = await fetch(url, { headers: HEADERS });
         const history = await res.json();
-        
-        if (history.length !== lastMsgCount) {
-            const container = document.getElementById('chat-container');
-            
-            // 通知チェック
-            if (lastMsgCount !== 0 && history.length > lastMsgCount) {
+
+        if (history.length > lastMsgCount) {
+            if (!silent && history.length > 0) {
                 const lastMsg = history[history.length - 1];
-                if (lastMsg.from_uuid !== myUUID && notificationSettings[friendUuid]) {
-                    if (Notification.permission === "granted") {
-                        new Notification("新着メッセージ", { body: lastMsg.content });
-                    }
+                if (lastMsg.from_uuid === friendUuid && notificationSettings[friendUuid] === true) {
+                    const partner = friends.find(f => f.uuid === friendUuid);
+                    sendBrowserNotification(partner ? partner.name : "新着メッセージ", lastMsg.content);
                 }
             }
-
+            const container = document.getElementById('chat-container');
             container.innerHTML = '';
             history.forEach(msg => {
                 const div = document.createElement('div');
@@ -64,45 +113,12 @@ async function loadChatHistory(friendUuid) {
             lastMsgCount = history.length;
             container.scrollTop = container.scrollHeight;
         }
-    } catch (e) {}
+    } catch (e) { console.error("Load Chat Error:", e); }
 }
 
-async function syncFriends() {
-    try {
-        const url = `${SB_URL}/friend_relations?or=(user_a.eq.${myUUID},user_b.eq.${myUUID})`;
-        const res = await fetch(url, { headers: HEADERS });
-        const data = await res.json();
-        const dbUuids = data.map(rel => (rel.user_a === myUUID) ? rel.user_b : rel.user_a);
-        
-        let updated = false;
-        const newFriendList = [];
-
-        for (const uid of dbUuids) {
-            const latestName = await getFriendName(uid);
-            newFriendList.push({ uuid: uid, name: latestName });
-            
-            const existing = friends.find(f => f.uuid === uid);
-            if (!existing || existing.name !== latestName) {
-                updated = true;
-            }
-        }
-
-        if (updated || friends.length !== newFriendList.length) {
-            friends = newFriendList;
-            localStorage.setItem('chat_friends', JSON.stringify(friends));
-            renderFriendList();
-            if (currentFriendUUID) {
-                const current = friends.find(f => f.uuid === currentFriendUUID);
-                if (current) document.getElementById('chat-with-name').innerText = `${current.name} とのチャット`;
-            }
-        }
-    } catch (e) {}
-}
-
-// --- 5. UI描画 ---
+// --- 7. UI表示 ---
 function renderFriendList() {
     const container = document.getElementById('friend-list-container');
-    if (!container) return;
     container.innerHTML = '';
     friends.forEach(f => {
         const div = document.createElement('div');
@@ -112,92 +128,71 @@ function renderFriendList() {
             currentFriendUUID = f.uuid;
             lastMsgCount = 0;
             document.getElementById('chat-with-name').innerText = `${f.name} とのチャット`;
-            document.getElementById('chat-container').innerHTML = '';
-            updateNotifBtnUI();
+            document.getElementById('notify-area').style.display = 'block';
+            document.getElementById('notify-toggle').checked = !!notificationSettings[f.uuid];
             renderFriendList();
-            loadChatHistory(f.uuid);
+            loadChatHistory(f.uuid, true);
         };
         container.appendChild(div);
     });
 }
 
-function updateNotifBtnUI() {
-    const btn = document.getElementById('notif-toggle-btn');
-    if (!currentFriendUUID) {
-        btn.style.display = 'none';
+function renderDeleteList() {
+    const container = document.getElementById('delete-friend-list');
+    container.innerHTML = '';
+    if (friends.length === 0) {
+        container.innerHTML = '<div style="font-size:11px; color:#999; margin-top:5px;">登録なし</div>';
         return;
     }
-    btn.style.display = 'flex';
-    const isOn = notificationSettings[currentFriendUUID] || false;
-    btn.className = isOn ? 'active' : '';
-    document.getElementById('notif-icon').innerText = isOn ? '🔔' : '🔕';
-    document.getElementById('notif-status').innerText = isOn ? 'ON' : 'OFF';
-}
-
-window.toggleNotification = () => {
-    if (!currentFriendUUID) return;
-    
-    if (Notification.permission === "default") {
-        Notification.requestPermission();
-    }
-
-    const currentStatus = notificationSettings[currentFriendUUID] || false;
-    notificationSettings[currentFriendUUID] = !currentStatus;
-    localStorage.setItem('chat_notif_settings', JSON.stringify(notificationSettings));
-    updateNotifBtnUI();
-};
-
-function renderDeleteFriendList() {
-    const container = document.getElementById('delete-friend-list');
-    if(!container) return;
-    container.innerHTML = friends.length ? '' : '<p style="font-size:13px; color:#999;">フレンドはいません</p>';
     friends.forEach(f => {
-        const item = document.createElement('div');
-        item.style = "display:flex; justify-content:space-between; align-items:center; padding:10px; border-bottom:1px solid #eee;";
-        item.innerHTML = `<span>${f.name}</span><button onclick="deleteFriend('${f.uuid}')" style="background:#e74c3c;color:white;border:none;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:12px;">削除</button>`;
-        container.appendChild(item);
+        const div = document.createElement('div');
+        div.className = 'delete-item';
+        div.innerHTML = `<span>${f.name}</span><button class="del-btn" onclick="removeFriend('${f.uuid}')">解除</button>`;
+        container.appendChild(div);
     });
 }
 
-// --- 6. アクション ---
-window.deleteFriend = async (uuid) => {
-    if (!confirm("削除しますか？")) return;
-    const query = `or=(and(user_a.eq.${myUUID},user_b.eq.${uuid}),and(user_a.eq.${uuid},user_b.eq.${myUUID}))`;
-    await fetch(`${SB_URL}/friend_relations?${query}`, { method: 'DELETE', headers: HEADERS });
-    friends = friends.filter(f => f.uuid !== uuid);
-    localStorage.setItem('chat_friends', JSON.stringify(friends));
-    if (currentFriendUUID === uuid) { 
-        currentFriendUUID = null; 
-        document.getElementById('chat-with-name').innerText = '相手を選択してください';
-        document.getElementById('notif-toggle-btn').style.display = 'none'; 
-        document.getElementById('chat-container').innerHTML = '';
-    }
-    renderFriendList(); renderDeleteFriendList();
-};
-
-window.saveMyName = async () => {
-    const val = document.getElementById('my-name-input').value.trim();
-    if (val) { 
-        myDisplayName = val; 
-        localStorage.setItem('chat_my_name', val); 
-        await pushNameToDB(val); 
-        closeAllModals(); 
-        syncFriends(); 
-    }
-};
-
+// --- 8. 各種アクション ---
 window.addFriend = async () => {
     const input = document.getElementById('friend-code-input');
     const code = input.value.trim().toUpperCase();
     if (!code) return;
+
+    await fetch(`${SB_URL}/users`, { 
+        method: 'POST', 
+        headers: { ...HEADERS, 'Prefer': 'resolution=merge-duplicates' }, 
+        body: JSON.stringify({ uuid: myUUID, display_name: myDisplayName }) 
+    });
+
     const res = await fetch(`${SB_URL}/friend_codes?code=eq.${code}&select=uuid`, { headers: HEADERS });
     const data = await res.json();
+
     if (data.length > 0 && data[0].uuid !== myUUID) {
-        await fetch(`${SB_URL}/friend_relations`, { method: 'POST', headers: HEADERS, body: JSON.stringify({ user_a: myUUID, user_b: data[0].uuid }) });
+        await fetch(`${SB_URL}/friend_relations`, { 
+            method: 'POST', 
+            headers: HEADERS, 
+            body: JSON.stringify({ user_a: myUUID, user_b: data[0].uuid }) 
+        });
         input.value = '';
-        syncFriends(); closeAllModals();
+        await syncFriends(); 
+        closeAllModals();
     } else {
         alert("無効なコードです");
+    }
+};
+
+window.saveMyName = async () => {
+    const val = document.getElementById('my-name-input').value.trim();
+    if (val) {
+        myDisplayName = val; 
+        localStorage.setItem('chat_my_name', val);
+        await fetch(`${SB_URL}/users`, { 
+            method: 'POST', 
+            headers: { ...HEADERS, 'Prefer': 'resolution=merge-duplicates' }, 
+            body: JSON.stringify({ uuid: myUUID, display_name: val }) 
+        });
+        closeAllModals();
+        syncFriends();
     }
 };
 
@@ -211,28 +206,31 @@ window.showFriendModal = async () => {
 
 window.showSettingsModal = () => {
     document.getElementById('my-name-input').value = myDisplayName;
-    renderDeleteFriendList();
+    document.getElementById('my-uuid-display').innerText = myUUID;
+    renderDeleteList();
     document.getElementById('settings-modal').style.display = 'block';
     document.getElementById('overlay').style.display = 'block';
 };
 
 window.closeAllModals = () => { document.querySelectorAll('.modal, .overlay').forEach(el => el.style.display = 'none'); };
+window.copyUUID = () => { navigator.clipboard.writeText(myUUID); alert("UUIDをコピーしました"); };
 
-// --- 7. 初期化 ---
-window.addEventListener('DOMContentLoaded', () => {
-    pushNameToDB(myDisplayName);
-    
+window.addEventListener('DOMContentLoaded', async () => {
+    await syncFriends();
+
     document.getElementById('send-btn').onclick = async () => {
         const input = document.getElementById('msg-input');
-        if (!input.value.trim() || !currentFriendUUID) return;
-        await fetch(`${SB_URL}/chat_messages`, { method: 'POST', headers: HEADERS, body: JSON.stringify({ from_uuid: myUUID, to_uuid: currentFriendUUID, content: input.value.trim() }) });
+        const content = input.value.trim();
+        if (!content || !currentFriendUUID) return;
         input.value = '';
-        loadChatHistory(currentFriendUUID);
+        await fetch(`${SB_URL}/chat_messages`, { 
+            method: 'POST', 
+            headers: HEADERS, 
+            body: JSON.stringify({ from_uuid: myUUID, to_uuid: currentFriendUUID, content: content }) 
+        });
+        loadChatHistory(currentFriendUUID, true);
     };
 
-    renderFriendList();
-    syncFriends();
-
-    setInterval(() => { if (currentFriendUUID) loadChatHistory(currentFriendUUID); }, 3000);
-    setInterval(syncFriends, 5000);
+    setInterval(() => { if (currentFriendUUID) loadChatHistory(currentFriendUUID, false); }, 3000);
+    setInterval(syncFriends, 10000);
 });
