@@ -85,12 +85,20 @@
         .msg img { max-width: 100%; border-radius: 10px; cursor: pointer; display: block; margin: 5px 0; }
 
         /* --- 入力フォーム（スマホ最適化） --- */
-        .input-area { 
-            background: var(--input-bg); padding: 10px 15px; 
-            display: flex; gap: 10px; border-top: 1px solid #ddd; align-items: center;
-            flex-shrink: 0;
-            padding-bottom: calc(10px + env(safe-area-inset-bottom)); 
-        }
+.input-area { 
+    background: var(--input-bg); 
+    padding: 10px 15px; 
+    display: flex; 
+    gap: 10px; 
+    border-top: 1px solid #ddd; 
+    align-items: center;
+    flex-shrink: 0;
+
+    /* ここを調整してください */
+    /* env(safe-area-inset-bottom) はスマホのバーを避けるための自動余白です */
+    /* その後ろの + 20px の数字を増やすと、入力欄が上に上がります */
+    padding-bottom: calc(env(safe-area-inset-bottom) + 10px); 
+}
 
         input[type="text"] { 
             flex: 1; border: 1px solid #ccc; padding: 10px 15px; 
