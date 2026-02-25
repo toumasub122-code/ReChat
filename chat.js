@@ -17,19 +17,32 @@ let notificationSettings = JSON.parse(localStorage.getItem('chat_notify_settings
 
 // --- 4. 通知機能 ---
 function sendBrowserNotification(title, body) {
+    // ブラウザの通知許可を確認してから実行
     if (Notification.permission === "granted") {
-        new Notification(title, { body: body });
+        try {
+            new Notification(title, { body: body, icon: 'https://cdn-icons-png.flaticon.com/512/733/733585.png' });
+        } catch (e) {
+            console.error("Notification Error:", e);
+        }
     }
 }
 
-window.toggleNotification = () => {
+window.toggleNotification = async () => {
     if (!currentFriendUUID) return;
     const isEnabled = document.getElementById('notify-toggle').checked;
+    
+    // ONにする時に権限を要求
+    if (isEnabled) {
+        const permission = await Notification.requestPermission();
+        if (permission !== "granted") {
+            alert("ブラウザの通知設定がブロックされています。設定から許可してください。");
+            document.getElementById('notify-toggle').checked = false;
+            return;
+        }
+    }
+
     notificationSettings[currentFriendUUID] = isEnabled;
     localStorage.setItem('chat_notify_settings', JSON.stringify(notificationSettings));
-    if (isEnabled && Notification.permission === "default") {
-        Notification.requestPermission();
-    }
 };
 
 // --- 5. 同期・削除ロジック ---
@@ -68,20 +81,8 @@ window.removeFriend = async (targetUuid) => {
     if (!confirm("本当に削除しますか？")) return;
     try {
         const cond = `or=(and(user_a.eq.${myUUID},user_b.eq.${targetUuid}),and(user_a.eq.${targetUuid},user_b.eq.${myUUID}))`;
-        const res = await fetch(`${SB_URL}/friend_relations?${cond}`, { method: 'DELETE', headers: HEADERS });
-        if (res.ok) {
-            friends = friends.filter(f => f.uuid !== targetUuid);
-            friendUuids = friendUuids.filter(u => u !== targetUuid);
-            localStorage.setItem('chat_friend_uuids', JSON.stringify(friendUuids));
-            if (currentFriendUUID === targetUuid) {
-                currentFriendUUID = null;
-                document.getElementById('chat-container').innerHTML = '';
-                document.getElementById('chat-with-name').innerText = '相手を選択してください';
-                document.getElementById('notify-area').style.display = 'none';
-            }
-            renderFriendList();
-            renderDeleteList();
-        }
+        await fetch(`${SB_URL}/friend_relations?${cond}`, { method: 'DELETE', headers: HEADERS });
+        syncFriends();
     } catch (e) { console.error("Remove Error:", e); }
 };
 
@@ -94,14 +95,20 @@ async function loadChatHistory(friendUuid, silent = true) {
         const res = await fetch(url, { headers: HEADERS });
         const history = await res.json();
 
+        // 新着メッセージがある場合
         if (history.length > lastMsgCount) {
-            if (!silent && history.length > 0) {
-                const lastMsg = history[history.length - 1];
-                if (lastMsg.from_uuid === friendUuid && notificationSettings[friendUuid] === true) {
-                    const partner = friends.find(f => f.uuid === friendUuid);
-                    sendBrowserNotification(partner ? partner.name : "新着メッセージ", lastMsg.content);
-                }
+            const newMsgs = history.slice(lastMsgCount);
+            
+            // 通知を送る条件: silentがfalse（自動更新時）かつ、設定がON
+            if (!silent && notificationSettings[friendUuid] === true) {
+                newMsgs.forEach(msg => {
+                    if (msg.from_uuid === friendUuid) {
+                        const partner = friends.find(f => f.uuid === friendUuid);
+                        sendBrowserNotification(partner ? partner.name : "新着メッセージ", msg.content);
+                    }
+                });
             }
+
             const container = document.getElementById('chat-container');
             container.innerHTML = '';
             history.forEach(msg => {
@@ -131,7 +138,7 @@ function renderFriendList() {
             document.getElementById('notify-area').style.display = 'block';
             document.getElementById('notify-toggle').checked = !!notificationSettings[f.uuid];
             renderFriendList();
-            loadChatHistory(f.uuid, true);
+            loadChatHistory(f.uuid, true); // 最初は通知を鳴らさない(true)
         };
         container.appendChild(div);
     });
@@ -174,7 +181,7 @@ window.addFriend = async () => {
             body: JSON.stringify({ user_a: myUUID, user_b: data[0].uuid }) 
         });
         input.value = '';
-        await syncFriends(); 
+        syncFriends(); 
         closeAllModals();
     } else {
         alert("無効なコードです");
@@ -228,9 +235,10 @@ window.addEventListener('DOMContentLoaded', async () => {
             headers: HEADERS, 
             body: JSON.stringify({ from_uuid: myUUID, to_uuid: currentFriendUUID, content: content }) 
         });
-        loadChatHistory(currentFriendUUID, true);
+        loadChatHistory(currentFriendUUID, true); // 送信時は通知不要
     };
 
+    // 自動更新ループ（ここをfalseにすることで新着時に通知が飛ぶ）
     setInterval(() => { if (currentFriendUUID) loadChatHistory(currentFriendUUID, false); }, 3000);
     setInterval(syncFriends, 10000);
 });
