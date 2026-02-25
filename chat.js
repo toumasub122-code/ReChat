@@ -12,10 +12,45 @@ const HEADERS = { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Conten
 let currentFriendUUID = null;
 let friends = []; 
 let lastMsgCount = 0;
+// 各フレンドごとの通知設定を保持
 let notificationSettings = JSON.parse(localStorage.getItem('chat_notify_settings') || '{}');
 let imgHistory = JSON.parse(localStorage.getItem('chat_img_history') || '[]');
 
-// --- 4. 画像処理 ---
+// --- 4. 通知ロジック ---
+
+// 通知トグルの切り替え
+window.toggleNotification = async () => {
+    const isChecked = document.getElementById('notify-toggle').checked;
+    
+    if (isChecked) {
+        // ブラウザの通知許可を求める
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+            alert("ブラウザの通知設定がブロックされています。");
+            document.getElementById('notify-toggle').checked = false;
+            return;
+        }
+    }
+    
+    if (currentFriendUUID) {
+        notificationSettings[currentFriendUUID] = isChecked;
+        localStorage.setItem('chat_notify_settings', JSON.stringify(notificationSettings));
+    }
+};
+
+// 通知を表示する関数
+function showNotification(senderName, content) {
+    // 相手との通知設定がオフ、またはブラウザが非表示（バックグラウンド等）でない場合はスルー
+    // (タブを見ているときは通知を出さない仕様にする場合)
+    if (Notification.permission === 'granted') {
+        new Notification(`新着メッセージ: ${senderName}`, {
+            body: content.includes('/storage/v1/object/public/') ? '[画像が届きました]' : content,
+            icon: 'https://cdn-icons-png.flaticon.com/512/733/733585.png' // 任意のアイコンURL
+        });
+    }
+}
+
+// --- 5. 画像・チャットロジック ---
 
 function checkImageQuota() {
     const now = Date.now();
@@ -24,7 +59,6 @@ function checkImageQuota() {
     return imgHistory.length < 5;
 }
 
-// DataURLをBlobに変換（スマホ送信の安定化）
 function dataUrlToBlob(dataUrl) {
     const parts = dataUrl.split(';base64,');
     const bin = atob(parts[1]);
@@ -33,41 +67,30 @@ function dataUrlToBlob(dataUrl) {
     return new Blob([buffer], { type: 'image/jpeg' });
 }
 
-// HTMLから呼ばれる画像送信関数
 async function sendImageMessage(dataUrl) {
     if (!currentFriendUUID) return;
     if (!checkImageQuota()) { alert("画像送信は1時間に5枚までです。"); return; }
-
     try {
         const blob = dataUrlToBlob(dataUrl);
         const fileName = `${Date.now()}_${crypto.randomUUID()}.jpg`;
         const storageUrl = SB_URL.replace('/rest/v1', '/storage/v1') + `/object/chat-images/${myUUID}/${fileName}`;
-
         const res = await fetch(storageUrl, {
             method: 'POST',
             headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'image/jpeg' },
             body: blob
         });
-
         if (!res.ok) throw new Error("Upload Failed");
-
         const publicUrl = SB_URL.replace('/rest/v1', '/storage/v1') + `/object/public/chat-images/${myUUID}/${fileName}`;
         await fetch(`${SB_URL}/chat_messages`, { 
             method: 'POST', 
             headers: HEADERS, 
             body: JSON.stringify({ from_uuid: myUUID, to_uuid: currentFriendUUID, content: publicUrl }) 
         });
-
         imgHistory.push(Date.now());
         localStorage.setItem('chat_img_history', JSON.stringify(imgHistory));
         loadChatHistory(currentFriendUUID, true);
-    } catch (err) {
-        alert("送信失敗");
-        console.error(err);
-    }
+    } catch (err) { alert("送信失敗"); console.error(err); }
 }
-
-// --- 5. チャットロジック ---
 
 async function syncFriends() {
     try {
@@ -84,14 +107,7 @@ async function syncFriends() {
             updatedFriends.push({ uuid: uid, name: name });
         }
         friends = updatedFriends;
-
-        if (currentFriendUUID && !dbUuids.includes(currentFriendUUID)) {
-            currentFriendUUID = null;
-            document.getElementById('chat-container').innerHTML = '';
-            document.getElementById('chat-with-name').innerText = '相手を選択してください';
-        }
         renderFriendList();
-        if (document.getElementById('settings-modal').style.display === 'block') renderDeleteList();
     } catch (e) { console.error("Sync Error:", e); }
 }
 
@@ -103,13 +119,24 @@ async function loadChatHistory(friendUuid, silent = true) {
         const res = await fetch(url, { headers: HEADERS });
         const history = await res.json();
 
+        // 新着メッセージがあるか判定
         if (history.length > lastMsgCount) {
             const container = document.getElementById('chat-container');
+            
+            // 通知を送る判定 (最初のロード時は送らない、自分が送った時は送らない)
+            if (!silent && lastMsgCount > 0) {
+                const latestMsg = history[history.length - 1];
+                if (latestMsg.from_uuid !== myUUID && notificationSettings[friendUuid]) {
+                    const sender = friends.find(f => f.uuid === friendUuid);
+                    showNotification(sender ? sender.name : "フレンド", latestMsg.content);
+                }
+            }
+
             container.innerHTML = '';
             history.forEach(msg => {
                 const div = document.createElement('div');
                 div.className = `msg ${msg.from_uuid === myUUID ? 'me' : 'other'}`;
-                if (msg.content.includes('/storage/v1/object/public/chat-images/')) {
+                if (msg.content.includes('/storage/v1/object/public/')) {
                     const img = document.createElement('img');
                     img.src = msg.content;
                     img.onclick = () => window.open(msg.content, '_blank');
@@ -139,6 +166,7 @@ function renderFriendList() {
             lastMsgCount = 0;
             document.getElementById('chat-with-name').innerText = `${f.name} とのチャット`;
             document.getElementById('notify-area').style.display = 'block';
+            // 通知トグルの状態を反映
             document.getElementById('notify-toggle').checked = !!notificationSettings[f.uuid];
             renderFriendList();
             loadChatHistory(f.uuid, true);
@@ -158,7 +186,7 @@ function renderDeleteList() {
     });
 }
 
-// --- 7. 各種アクション ---
+// --- 7. アクション ---
 
 window.addFriend = async () => {
     const input = document.getElementById('friend-code-input');
@@ -210,7 +238,6 @@ window.showSettingsModal = () => {
 window.closeAllModals = () => { document.querySelectorAll('.modal, .overlay').forEach(el => el.style.display = 'none'); };
 window.copyUUID = () => { navigator.clipboard.writeText(myUUID); alert("UUIDをコピーしました"); };
 
-// 文字送信関数（HTMLから呼ばれる）
 async function sendMessage() {
     const input = document.getElementById('msg-input');
     const content = input.value.trim();
@@ -223,6 +250,7 @@ async function sendMessage() {
 // 初期化
 window.addEventListener('DOMContentLoaded', async () => {
     await syncFriends();
+    // 3秒に一度、新着メッセージを確認（通知判定をfalseにして実行）
     setInterval(() => { if (currentFriendUUID) loadChatHistory(currentFriendUUID, false); }, 3000);
     setInterval(syncFriends, 10000);
 });
