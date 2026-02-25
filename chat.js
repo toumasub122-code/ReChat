@@ -16,7 +16,7 @@ let lastMsgCount = 0;
 // WebRTC
 let pc = null;
 let localStream = null;
-const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
 
 // --- 4. 名前管理機能 ---
 async function pushNameToDB(name) {
@@ -123,7 +123,8 @@ async function sendCallSignal(to, type, payload) {
 
 async function watchCalls() {
     try {
-        const res = await fetch(`${SB_URL}/friend_calls?to_uuid=eq.${myUUID}&order=created_at.desc&limit=1`, { headers: HEADERS });
+        // 自分宛かつ、自分以外が送ってきた最新の信号を取得
+        const res = await fetch(`${SB_URL}/friend_calls?to_uuid=eq.${myUUID}&from_uuid=neq.${myUUID}&order=created_at.desc&limit=1`, { headers: HEADERS });
         const data = await res.json();
         if (data.length === 0) return;
         const signal = data[0];
@@ -133,10 +134,14 @@ async function watchCalls() {
             window.incomingOffer = signal;
             showCallUI(signal.from_uuid, true);
         } else if (signal.type === 'answer' && pc) {
-            await pc.setRemoteDescription(new RTCSessionDescription(signal.payload));
-            document.getElementById('call-status').innerText = "通話中";
+            if (pc.signalingState === "have-local-offer") {
+                await pc.setRemoteDescription(new RTCSessionDescription(signal.payload));
+                document.getElementById('call-status').innerText = "通話中";
+            }
         } else if (signal.type === 'candidate' && pc) {
-            await pc.addIceCandidate(new RTCIceCandidate(signal.payload));
+            if (pc.remoteDescription) {
+                await pc.addIceCandidate(new RTCIceCandidate(signal.payload)).catch(e => {});
+            }
         } else if (signal.type === 'hangup') {
             endCall(false);
         }
@@ -154,19 +159,22 @@ function showCallUI(targetUuid, isIncoming) {
 
     document.getElementById('call-answer-btn').onclick = async () => {
         await setupWebRTC(false, targetUuid);
-        await pc.setRemoteDescription(new RTCSessionDescription(window.incomingOffer.payload));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        await sendCallSignal(targetUuid, 'answer', answer);
-        document.getElementById('call-status').innerText = "通話中";
-        document.getElementById('call-answer-btn').style.display = 'none';
+        if (window.incomingOffer) {
+            await pc.setRemoteDescription(new RTCSessionDescription(window.incomingOffer.payload));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            await sendCallSignal(targetUuid, 'answer', answer);
+            document.getElementById('call-status').innerText = "通話中";
+            document.getElementById('call-answer-btn').style.display = 'none';
+        }
     };
 }
 
 function endCall(sendSignal = true) {
-    if (sendSignal && pc && currentFriendUUID) sendCallSignal(currentFriendUUID, 'hangup', {});
+    if (sendSignal && currentFriendUUID) sendCallSignal(currentFriendUUID, 'hangup', {});
     if (pc) { pc.close(); pc = null; }
     if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+    document.getElementById('remote-audio').srcObject = null;
     document.getElementById('call-modal').style.display = 'none';
     document.getElementById('overlay').style.display = 'none';
 }
@@ -262,12 +270,17 @@ window.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('call-start-btn').onclick = () => { showCallUI(currentFriendUUID, false); setupWebRTC(true, currentFriendUUID); };
     document.getElementById('call-hangup-btn').onclick = () => endCall(true);
 
+    window.onbeforeunload = () => { if (pc) endCall(true); };
+
     renderFriendList();
     syncFriends();
     
+    // チャット履歴とフレンド同期は4秒おき
     setInterval(() => {
         if (currentFriendUUID) loadChatHistory(currentFriendUUID);
         syncFriends();
-        watchCalls();
     }, 4000);
+
+    // 通話監視は1.5秒おきに高速チェック
+    setInterval(watchCalls, 1500);
 });
